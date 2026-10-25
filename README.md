@@ -1,113 +1,186 @@
 # LocalPilot — On-Device Personal Action Agent
 
 [![GitHub Repository](https://img.shields.io/badge/GitHub-ndanevski1%2FLocalPilot-blue?style=flat-square&logo=github)](https://github.com/ndanevski1/LocalPilot)
-![Project Phase](https://img.shields.io/badge/Phase-Inception%20%2F%20Design-orange?style=flat-square)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=flat-square)](LICENSE)
+![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-blue?style=flat-square&logo=python)
 
 LocalPilot is an open-source, local-first autonomous AI action agent that runs directly on your computer to handle digital chores—such as compiling email digests and managing web purchases—while keeping private credentials and session data encrypted strictly on your host hardware.
 
----
-
-## 👥 Team & Roles
-
-* **Project Manager / Leader:** Mounika Kannan
-* **Assistant Project Manager / Software Engineer:** Nikola Danevski
-* **Software Engineer / UI/UX Designer:** Daniiar Gadeev
-* **Quality Assurance & Documentation:** Sowjanya Sai Lakshmi Pothana
+> 📖 **Looking for full system specifications and architecture?**  
+> See [PROJECT_DETAILS.md](PROJECT_DETAILS.md) for the complete Software Requirements Specification (SRS), team roles, and module roadmap.
 
 ---
 
-## 🌟 Key Features
+## 💡 How LocalPilot Works: Remote Control vs. Engine
 
-* **Zero-Trust Password Masking:** Raw credentials never reach external LLMs. The agent processes DOM trees with synthetic placeholder tokens (e.g., `{{AMAZON_PASSWORD}}`) and injects real credentials locally.
-* **Human-in-the-Loop (HITL) Gatekeeper:** All state-changing or financial actions (e.g., placing purchases, sending emails) automatically pause for direct approval via Telegram interactive buttons.
-* **Seamless Telegram Remote Control:** Trigger tasks, monitor live execution steps, and review screenshots remotely through an outbound Telegram bot connection without open ports or router configuration.
-* **Automated Inbox Summaries:** Fetches and synthesizes unread emails into clean daily digests via direct local OAuth integrations (e.g., Gmail REST API).
-* **Semantic Web Automation:** Uses Playwright paired with accessibility tree processing (`browser-use`), enabling the agent to navigate e-commerce stores dynamically without relying on brittle CSS selectors.
-
----
-
-## 🏗️ System Architecture
-
-LocalPilot operates as a background daemon process (Python / FastAPI) on the user's host machine. Remote interaction occurs over outbound HTTPS connections via the Telegram Bot API.
+LocalPilot follows a **zero-trust, distributed architecture**. There is no central cloud server holding user passwords:
 
 ```
-┌───────────────────────────────────────────────────────────┐
-│                      User Mobile Device                   │
-│                    (Telegram App UI / Bot)                │
-└─────────────────────────────┬─────────────────────────────┘
-                              │ Telegram API (Outbound HTTPS)
-                              ▼
-┌───────────────────────────────────────────────────────────┐
-│ Host Computer (LocalPilot FastAPI Daemon)                 │
-│                                                           │
-│  ┌──────────────────┐  ┌──────────────────┐  ┌──────────┐ │
-│  │ Local Vault      │  │ Hybrid LLM        │  │ HITL     │ │
-│  │ (Encrypted Keys) │  │ Router           │  │ Gate     │ │
-│  └────────┬─────────┘  └────────┬─────────┘  └────┬─────┘ │
-│           │                     │                 │       │
-│           ▼                     ▼                 ▼       │
-│  ┌──────────────────┐  ┌──────────────────┐  ┌──────────┐ │
-│  │ Gmail REST API   │  │ Playwright Engine│  │ Desktop  │ │
-│  │ (Service Runner) │  │ (Accessibility)  │  │ Browser  │ │
-│  └──────────────────┘  └──────────────────┘  └──────────┘ │
-└───────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────┐
+│  Your Phone / Mobile Device (Android / iOS)  │ ◀── In your pocket anywhere
+│          (Standard Telegram App)             │     Acts as the "Remote Control"
+└──────────────────────┬───────────────────────┘
+                       │ Outbound HTTPS (Telegram API)
+                       ▼
+┌──────────────────────────────────────────────┐
+│    Your Host Computer (Windows / Mac / Linux)│ ◀── On your desk
+│      (LocalPilot Python Daemon + Browser)    │     Acts as the "Autonomous Engine"
+└──────────────────────────────────────────────┘
+```
+
+1. **Host Computer (The Engine):** Runs the Python daemon on your Windows, macOS, or Linux machine. This is where web automations (Playwright), local AI models (Ollama), and encrypted credential vaults reside.
+2. **Mobile Device (The Remote Control):** Runs the regular Telegram messaging app (Android or iOS). You do **not** run Python or code on your phone—you simply chat with your bot to issue instructions and approve actions.
+3. **Zero Port Forwarding:** Uses outbound long-polling. No open router ports, public IP addresses, or webhooks are needed.
+
+---
+
+## 🚀 Quickstart: Setting Up for a New User / Developer
+
+Because LocalPilot runs locally on each user's machine, **every team member or user sets up their own local instance**.
+
+### Prerequisites
+* **Python 3.10+** installed on your host computer.
+* **Git** installed on your host computer.
+* A free **Telegram** account on your phone or computer.
+
+---
+
+### Step 1: Create Your Personal Telegram Bot
+
+Telegram requires each independently running computer to use its own bot token:
+
+1. Open Telegram on your phone or desktop and search for **`@BotFather`**.
+2. Send `/start`, then send `/newbot`.
+3. Choose a name (e.g. `Alice's LocalPilot`) and a username ending in `bot` (e.g. `alice_localpilot_bot`).
+4. **Copy the HTTP API token** (e.g. `8881514588:AAFvrvIVWr...`).
+
+---
+
+### Step 2: Get Your Personal Telegram User ID
+
+To make sure nobody else on Telegram can control your computer, LocalPilot locks execution to your numeric User ID:
+
+1. In Telegram, search for **`@userinfobot`**.
+2. Press **Start** (or send any message).
+3. Copy the numeric **`Id`** shown (e.g. `8787403346`).
+
+---
+
+### Step 3: Clone the Repository & Configure Secrets
+
+Open your terminal or command prompt on your host computer:
+
+```bash
+# Clone the repository
+git clone https://github.com/ndanevski1/LocalPilot.git
+cd LocalPilot
+```
+
+Create your private `.env` configuration file from the template:
+
+* **On Windows (PowerShell):**
+  ```powershell
+  Copy-Item .env.example .env
+  ```
+* **On macOS / Linux (Bash or Zsh):**
+  ```bash
+  cp .env.example .env
+  ```
+
+Open `.env` in any text editor and fill in your credentials from Steps 1 and 2:
+```env
+TELEGRAM_BOT_TOKEN="your_bot_token_here"
+TELEGRAM_ALLOWED_USER_ID="your_telegram_numeric_id_here"
+```
+
+> 🔒 **Security Notice:** The `.env` file is explicitly ignored in `.gitignore` and will never be pushed to GitHub.
+
+---
+
+### Step 4: Install Dependencies
+
+#### On Windows (PowerShell):
+```powershell
+# Create virtual environment
+python -m venv venv
+
+# Activate virtual environment
+.\venv\Scripts\Activate.ps1
+
+# Install requirements
+pip install -r requirements.txt
+```
+
+*(Note: If PowerShell blocks script execution, run `Set-ExecutionPolicy -Scope Process -ExecutionPolicy RemoteSigned` first).*
+
+#### On macOS / Linux (Terminal):
+```bash
+# Create virtual environment
+python3 -m venv venv
+
+# Activate virtual environment
+source venv/bin/activate
+
+# Install requirements
+pip install -r requirements.txt
 ```
 
 ---
 
-## 📜 Software Requirements Specification (SRS)
+### Step 5: Start the LocalPilot Daemon
 
-All functional requirements below follow the **Easy Approach to Requirements Syntax (EARS)** standard:
+Start the agent on your host machine:
 
-### Module 1: Credential Vault & Privacy
-* **[UBIQUITOUS]** The LocalPilot system shall store all third-party login credentials, API keys, and session tokens in an encrypted local database using AES-256 encryption.
-* **[EVENT-DRIVEN]** WHEN passing web page context or DOM structures to external LLM services, the LocalPilot system shall replace raw password strings and sensitive form fields with synthetic placeholder tokens.
-* **[EVENT-DRIVEN]** WHEN populating authentication forms in a live browser session, the LocalPilot system shall inject decrypted credentials directly into browser DOM fields on the local host machine.
+* **Windows:**
+  ```powershell
+  python bot.py
+  ```
+* **macOS / Linux:**
+  ```bash
+  python3 bot.py
+  ```
 
-### Module 2: Remote Telegram Interface
-* **[UBIQUITOUS]** The LocalPilot system shall maintain an outbound secure connection to the Telegram Bot API for remote interaction.
-* **[EVENT-DRIVEN]** WHEN an authorized user submits a command via Telegram, the LocalPilot system shall parse the intent and initiate the corresponding workflow.
-* **[EVENT-DRIVEN]** WHEN task execution status changes, the LocalPilot system shall transmit real-time progress logs, order summaries, and captured screenshots to the authorized Telegram chat.
-
-### Module 3: Human-in-the-Loop (HITL) Gatekeeper
-* **[STATE-DRIVEN]** WHILE executing a workflow, the LocalPilot system shall classify every tool action as either a *Read-Only* operation or a *State-Changing* operation.
-* **[EVENT-DRIVEN]** WHEN a State-Changing operation is requested by the agent loop, the LocalPilot system shall pause execution and send an approval request containing an action summary and interactive confirmation buttons to Telegram.
-* **[EVENT-DRIVEN]** WHEN an explicit "Approve" response is received from the authorized user, the LocalPilot system shall resume execution of the paused operation.
-* **[UNWANTED / EVENT-DRIVEN]** IF an "Approve" response is not received within 30 minutes, THEN the LocalPilot system shall abort the pending operation and notify the user.
-
-### Module 4: Web & Email Execution Engine
-* **[EVENT-DRIVEN]** WHEN automating web browser tasks, the LocalPilot system shall convert raw page HTML into standardized ARIA accessibility trees before sending structured representations to the reasoning engine.
-* **[EVENT-DRIVEN]** WHEN instructed to process email activity, the LocalPilot system shall retrieve unread messages using the Gmail REST API and synthesize a structured summary digest.
-
-### Module 5: Hybrid Model Routing
-* **[EVENT-DRIVEN]** WHEN processing text classification, email filtering, or simple intent parsing, the LocalPilot system shall route requests to local on-device models.
-* **[EVENT-DRIVEN]** WHEN performing complex visual web navigation or multi-step reasoning, the LocalPilot system shall route requests to high-capability cloud LLM APIs.
+You will see output confirming:
+```text
+[LocalPilot] - INFO - Initializing LocalPilot Telegram Bot...
+[LocalPilot] - INFO - LocalPilot Telegram Bot is running (Long-polling active)...
+[LocalPilot] - INFO - Press Ctrl+C to terminate the daemon.
+```
 
 ---
 
-## 🛠️ Planned Tech Stack
+## 📱 How to Use & Test from Your Mobile Device (Android / iOS / Mac)
 
-| Component | Technology |
+Now that the daemon is running on your host computer:
+
+1. Open the **Telegram app** on your **Android phone**, **iPhone**, or **Mac**.
+2. Open the chat with your bot (the username you registered with `@BotFather`).
+3. Send **`/start`**.
+
+### Available Commands & Interactive Demos:
+
+| Command | Action |
 | :--- | :--- |
-| **Backend Core** | Python 3.12+, FastAPI, WebSockets |
-| **Browser Automation** | Playwright, `browser-use` |
-| **LLM Orchestration** | LiteLLM / PydanticAI (Claude 3.5 Sonnet / GPT-4o for web, Ollama for offline) |
-| **Integrations** | Telegram Bot API, Gmail REST API (Google OAuth 2.0) |
-| **Vault & Storage** | SQLite encrypted with SQLCipher (AES-256) |
+| **`/start`** | Displays session information, security status, and interactive navigation menu. |
+| **`📊 System Status`** (`/status`) | Queries the host computer in real-time and returns OS platform, Python version, and connectivity diagnostics. |
+| **`🛡️ Test HITL Approval`** (`/demo_hitl`) | Triggers a **Human-in-the-Loop** simulation card with **[Approve ✅]** and **[Reject ❌]** buttons (demonstrating SRS Module 3). |
+| **`❓ Help`** (`/help`) | Displays operator command reference. |
+| **Natural Language Prompts** | Send any text message (e.g., *"Summarize my unread emails"* or *"Buy coffee beans on Amazon"*) to test prompt dispatching. |
 
 ---
 
-## 🛡️ Risk Mitigation Strategy
+## ❓ Frequently Asked Questions (FAQ)
 
-| Challenge | Impact | Mitigation Protocol |
-| :--- | :--- | :--- |
-| **Bot Detection / CAPTCHAs** | Execution loop hangs or fails when encountering challenge screens. | **Pause-and-Handoff:** LocalPilot pauses execution, alerts Telegram, and leaves the browser open on your desktop so you can complete the CAPTCHA manually. |
-| **E-Commerce Layout Changes** | Dynamic updates break hardcoded CSS/XPath scripts. | **Accessibility Trees:** Navigates standard ARIA accessibility trees rather than hardcoded DOM selectors. |
-| **Scope Creep** | Delayed delivery due to broad site support. | **Focused Target Scope:** Prototype support is explicitly constrained to 2–3 major web vendors for initial launch. |
+#### 1. Can multiple developers use the exact same Bot Token simultaneously?
+**No.** Telegram's long-polling protocol only permits **one active connection per bot token at a time**. If two computers run `python bot.py` with the same token, Telegram will terminate one with a `Conflict` error. Every developer should create their own bot handle via `@BotFather`.
 
----
+#### 2. Why doesn't the Python script run directly on an Android device?
+Desktop web automation (Playwright/Chromium), encrypted SQLite vaults, and local LLMs (Ollama) require desktop operating system capabilities and compute power. Android aggressively terminates background processes to save battery. The phone is intentionally designed to serve as a lightweight **remote control**, while your computer acts as the **worker**.
 
-## 🔗 Repository & Project Status
+#### 3. What happens if an unauthorized person messages my bot?
+If `TELEGRAM_ALLOWED_USER_ID` is set in your `.env`, LocalPilot will reject any incoming commands or callbacks from unfamiliar users with an `⛔ Access Denied` alert.
 
-* **Official Repository:** [https://github.com/ndanevski1/LocalPilot](https://github.com/ndanevski1/LocalPilot)
-* **Current Phase:** Inception & Architectural Design (Requirements definition, API schema design, and system specification). Implementation code will follow in upcoming development sprints.
+#### 4. Does my computer need to stay on?
+Yes. Because LocalPilot is a local-first agent that runs private tasks on your hardware, the host machine must be on and running `bot.py` while receiving remote instructions.
+
+
