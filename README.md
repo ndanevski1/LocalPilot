@@ -142,10 +142,33 @@ Start the agent on your host machine:
 
 You will see output confirming:
 ```text
-[LocalPilot] - INFO - Initializing LocalPilot Telegram Bot...
+[LocalPilot] - INFO - Initializing LocalPilot Telegram Bot with Gmail Engine...
 [LocalPilot] - INFO - LocalPilot Telegram Bot is running (Long-polling active)...
 [LocalPilot] - INFO - Press Ctrl+C to terminate the daemon.
 ```
+
+---
+
+### Step 6 (Optional): Connect Your Gmail Account
+
+LocalPilot can read and summarize your **Primary inbox** (Promotions, Social, and Updates are automatically filtered out) via read-only Google OAuth 2.0. This step is entirely optional — the bot runs fully without it.
+
+#### Authenticate (One-Time Setup)
+
+Run the interactive setup script directly in your terminal (not as a background process — it must open your browser):
+
+* **Windows:**
+  ```powershell
+  .\venv\Scripts\python setup_gmail.py
+  ```
+* **macOS / Linux:**
+  ```bash
+  python3 setup_gmail.py
+  ```
+
+Your browser will open with Google's consent screen. Select your account and grant **Read-Only** access. Once you see *"The authentication flow has completed"* in your browser, your `token.json` is saved and the bot is ready.
+
+To opt out at any time, send `/disconnect_gmail` from Telegram or delete `token.json` from your project folder.
 
 ---
 
@@ -161,11 +184,14 @@ Now that the daemon is running on your host computer:
 
 | Command | Action |
 | :--- | :--- |
-| **`/start`** | Displays session information, security status, and interactive navigation menu. |
-| **`📊 System Status`** (`/status`) | Queries the host computer in real-time and returns OS platform, Python version, and connectivity diagnostics. |
+| **`/start`** | Displays session information, security status, Gmail connection state, and interactive navigation menu. |
+| **`📊 System Status`** (`/status`) | Queries the host computer in real-time and returns OS platform, Python version, Gmail connection, and connectivity diagnostics. |
+| **`📬 Unread Email Digest`** (`/summary`) | Fetches the 5 latest unread emails from your **Primary inbox** (Promotions, Social, and Updates filtered out). |
+| **`🔗 Connect Gmail`** (`/connect_gmail`) | Displays instructions for running the one-time `setup_gmail.py` Google OAuth flow on the host computer. |
+| **`🔌 Disconnect Gmail`** (`/disconnect_gmail`) | Deletes the local `token.json` session token to immediately opt out of Gmail access. |
 | **`🛡️ Test HITL Approval`** (`/demo_hitl`) | Triggers a **Human-in-the-Loop** simulation card with **[Approve ✅]** and **[Reject ❌]** buttons (demonstrating SRS Module 3). |
 | **`❓ Help`** (`/help`) | Displays operator command reference. |
-| **Natural Language Prompts** | Send any text message (e.g., *"Summarize my unread emails"* or *"Buy coffee beans on Amazon"*) to test prompt dispatching. |
+| **Natural Language Prompts** | Send any text message (e.g., *"Summarize my unread emails"* or *"Give me my email digest"*) to test natural language dispatch. |
 
 ---
 
@@ -182,5 +208,8 @@ If `TELEGRAM_ALLOWED_USER_ID` is set in your `.env`, LocalPilot will reject any 
 
 #### 4. Does my computer need to stay on?
 Yes. Because LocalPilot is a local-first agent that runs private tasks on your hardware, the host machine must be on and running `bot.py` while receiving remote instructions.
+
+#### 5. Can multiple team members share the same Google OAuth Client ID (`credentials.json`)?
+**Yes.** The `credentials.json` file identifies the *application* (LocalPilot) to Google and is safe to share across your team via a private channel. Each team member goes through the OAuth flow independently using their own Google account, and each person's private session token (`token.json`) is stored only on their own local machine. No one can read another person's emails.
 
 
