@@ -16,6 +16,7 @@ Qwen acts as the autonomous driver:
 import json
 import logging
 import re
+import urllib.parse
 from typing import Tuple, Optional, Dict, Any, List, Callable
 from playwright.sync_api import sync_playwright, Page, Browser, BrowserContext
 import ollama
@@ -50,7 +51,7 @@ def is_paused() -> bool:
 
 def infer_initial_url(task_description: str) -> str:
     """
-    Uses Qwen to infer the best starting URL from the user's natural language task prompt,
+    Infers the best starting URL from the user's natural language task prompt,
     falling back to regex extraction or Google search.
     """
     # 1. Check if the user explicitly provided an explicit URL or domain in the prompt
@@ -62,10 +63,10 @@ def infer_initial_url(task_description: str) -> str:
         logger.info(f"Explicit URL found in task: {url}")
         return url
 
-    # 2. Ask Qwen to infer the target starting web address
+    # 2. Ask Qwen to infer the target starting root domain / website
     prompt = (
-        "Given the user's task prompt, output the single best starting website URL (e.g., https://github.com, https://amazon.com, https://google.com).\n"
-        "Output ONLY the raw URL starting with https:// and nothing else.\n\n"
+        "Given the user's task prompt, output ONLY the starting website's root domain homepage (e.g., https://scholar.google.com, https://github.com, https://sofia.edu, https://www.google.com).\n"
+        "RULES: Output ONLY the base URL starting with https://. NEVER invent internal paths or query parameters like '?q=...' or '/searchbyquery'.\n\n"
         f"Task: {task_description}\n"
         "URL:"
     )
@@ -79,14 +80,41 @@ def infer_initial_url(task_description: str) -> str:
         url_match = re.search(r"https?://[^\s\"']+", url_cand)
         if url_match:
             inferred = url_match.group(0).rstrip(",.!?")
-            logger.info(f"Qwen inferred initial starting URL: {inferred}")
-            return inferred
+            parsed = urllib.parse.urlparse(inferred)
+            if parsed.netloc:
+                # Strip hallucinated query parameters or deep paths from model inferences
+                clean_inferred = f"{parsed.scheme}://{parsed.netloc}"
+                logger.info(f"Qwen inferred initial starting URL: {clean_inferred} (raw candidate: {inferred})")
+                return clean_inferred
     except Exception as e:
         logger.warning(f"Failed to infer URL with Qwen: {e}")
 
     # 3. Universal fallback: start at Google Search for the task
-    encoded = task_description.replace(" ", "+")
+    encoded = urllib.parse.quote_plus(task_description)
     return f"https://www.google.com/search?q={encoded}"
+
+
+def _is_error_or_404_page(page: Page) -> bool:
+    """Checks whether the current page is an HTTP error, 404, or broken page."""
+    try:
+        title = (page.title() or "").lower()
+        if any(err in title for err in ["404", "not found", "page not found", "error 404", "server error"]):
+            return True
+
+        body_start = page.inner_text("body", timeout=1000)[:600].lower()
+        if any(err in body_start for err in [
+            "the requested url was not found",
+            "404 not found",
+            "404 - not found",
+            "page not found",
+            "this page could not be found",
+            "cannot be reached",
+            "error 404"
+        ]):
+            return True
+    except Exception:
+        pass
+    return False
 
 
 def trigger_go_back() -> None:
@@ -260,6 +288,7 @@ def _decide_next_action(
         '4. {"action": "finish", "answer": "..."}\n\n'
         "RULES:\n"
         "- If the answer to the TASK is visible in the SNIPPET or in the element labels, immediately return action 'finish' with the answer.\n"
+        "- NEVER finish if the page says '404', 'Not Found', or an error. If a page is broken, use 'navigate' to go to https://www.google.com.\n"
         "- NEVER use 'type' on links <a> or buttons <button>; use 'click' instead.\n"
         "- Output ONLY raw JSON. No markdown fences."
     )
@@ -328,7 +357,16 @@ def browse_and_answer(
                 on_step(0, MAX_AGENT_STEPS, f"Navigating to {initial_target}...", initial_target)
             page.goto(initial_target, wait_until="domcontentloaded", timeout=25000)
             page.wait_for_timeout(2000)
-            history.append(f"Navigated to {initial_target}")
+            if _is_error_or_404_page(page):
+                logger.warning(f"Initial target {initial_target} is 404/broken. Auto-recovering via Google Search...")
+                recovery_url = f"https://www.google.com/search?q={urllib.parse.quote_plus(task_description)}"
+                if on_step:
+                    on_step(0, MAX_AGENT_STEPS, "Target not found (404). Falling back to Google Search...", recovery_url)
+                page.goto(recovery_url, wait_until="domcontentloaded", timeout=25000)
+                page.wait_for_timeout(2000)
+                history.append(f"Initial target {initial_target} was 404. Redirected to Google Search: {recovery_url}")
+            else:
+                history.append(f"Navigated to {initial_target}")
 
         global _is_paused, _should_go_back, _should_stop
         _is_paused = False
@@ -361,6 +399,17 @@ def browse_and_answer(
             logger.info(f"--- [Step {step}/{MAX_AGENT_STEPS}] URL: {current_url} ---")
             print(f"\n[BrowserAgent] Step {step}/{MAX_AGENT_STEPS}: Inspecting DOM at {current_url}", flush=True)
 
+            # Detect broken/404 pages and auto-recover to Google Search instead of stalling
+            if _is_error_or_404_page(page):
+                logger.warning(f"Step {step}: Error/404 detected on {current_url}. Initiating auto-recovery.")
+                recovery_url = f"https://www.google.com/search?q={urllib.parse.quote_plus(task_description)}"
+                if on_step:
+                    on_step(step, MAX_AGENT_STEPS, "Broken page (404) detected. Recovering via Google Search...", recovery_url)
+                page.goto(recovery_url, wait_until="domcontentloaded", timeout=20000)
+                page.wait_for_timeout(2000)
+                history.append(f"Step {step}: Landed on broken/404 page ({current_url}). Auto-recovered by redirecting to Google Search.")
+                continue
+
             elements, page_snippet = _get_interactive_elements_and_snapshot(page)
             print(f"[BrowserAgent] Identified {len(elements)} interactive elements. Asking Qwen...", flush=True)
             if on_step:
@@ -381,6 +430,18 @@ def browse_and_answer(
 
             if action_type == "finish":
                 answer = decision.get("answer", "Task completed.")
+                # Verify that the model didn't falsely finish on a 404 / Not Found error
+                ans_lower = answer.lower()
+                if any(err in ans_lower for err in ["url was not found", "not found on this server", "404", "page not found", "cannot be reached"]) or _is_error_or_404_page(page):
+                    logger.warning(f"Step {step}: Model attempted to finish on a 404 error page. Redirecting to Google Search...")
+                    recovery_url = f"https://www.google.com/search?q={urllib.parse.quote_plus(task_description)}"
+                    if on_step:
+                        on_step(step, MAX_AGENT_STEPS, "Page not found (404). Recovering via Google Search...", recovery_url)
+                    page.goto(recovery_url, wait_until="domcontentloaded", timeout=20000)
+                    page.wait_for_timeout(2000)
+                    history.append(f"Step {step}: Model reported 404. Redirected to Google Search to locate working link: {recovery_url}")
+                    continue
+
                 if on_step:
                     on_step(step, MAX_AGENT_STEPS, "Goal completed! Compiling response...", current_url)
                 return True, answer, current_url
