@@ -423,6 +423,10 @@ async def call_browser_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         await unauthorized_warning(update)
         return
 
+    # Check if a custom task was passed directly or via command arguments (e.g. /call_browser <prompt>)
+    if not custom_task and context and context.args:
+        custom_task = " ".join(context.args).strip()
+
     # Use the user's custom typed message if provided, else fallback to default demo task
     task = custom_task or "Open github.com/ndanevski1 and tell me how many repositories they have and their latest activity."
 
