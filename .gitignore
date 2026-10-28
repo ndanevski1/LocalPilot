@@ -42,6 +42,7 @@ wheels/
 *.db
 *.sqlite3
 vault/
+localpilot.log
 
 # OS specific
 .DS_Store

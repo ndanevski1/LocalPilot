@@ -20,11 +20,18 @@ from telegram.ext import (
 )
 
 import gmail_service
+import browser_service
 
-# Configure logging
+# Configure logging to both console and a persistent local file
+LOG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "localpilot.log")
+
 logging.basicConfig(
     format="%(asctime)s - [%(name)s] - %(levelname)s - %(message)s",
     level=logging.INFO,
+    handlers=[
+        logging.StreamHandler(),
+        logging.FileHandler(LOG_FILE, encoding="utf-8")
+    ]
 )
 logger = logging.getLogger("LocalPilot")
 
@@ -68,8 +75,8 @@ def build_menu_markup() -> InlineKeyboardMarkup:
 
     keyboard = [
         [gmail_btn, InlineKeyboardButton("📊 System Status", callback_data="status")],
-        [InlineKeyboardButton("🛡️ Test HITL Approval", callback_data="demo_hitl"), opt_btn],
-        [InlineKeyboardButton("❓ Help & Commands", callback_data="help")],
+        [InlineKeyboardButton("🌐 Call Browser", callback_data="call_browser"), InlineKeyboardButton("🛡️ Test HITL Approval", callback_data="demo_hitl")],
+        [opt_btn, InlineKeyboardButton("❓ Help & Commands", callback_data="help")],
     ]
     return InlineKeyboardMarkup(keyboard)
 
@@ -225,7 +232,7 @@ async def summary_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
     loading_msg = "🔍 *Scanning unread emails in your primary inbox...*"
     if update.callback_query:
-        await update.callback_query.answer()
+        await _safe_answer_query(update.callback_query)
         msg_ref = await update.callback_query.message.reply_text(loading_msg, parse_mode="Markdown")
     else:
         msg_ref = await update.message.reply_text(loading_msg, parse_mode="Markdown")
@@ -265,6 +272,19 @@ async def help_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         await update.message.reply_text(help_text, parse_mode="Markdown")
 
 
+async def _safe_answer_query(query, text=None, show_alert=False) -> None:
+    """Safely responds to Telegram callback queries, silently ignoring expired query errors."""
+    if not query:
+        return
+    try:
+        if text:
+            await query.answer(text=text, show_alert=show_alert)
+        else:
+            await query.answer()
+    except Exception:
+        pass
+
+
 async def demo_hitl_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Demonstrates Module 3: Human-in-the-Loop (HITL) Gatekeeper."""
     if not check_auth(update):
@@ -292,7 +312,7 @@ async def demo_hitl_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     )
 
     if update.callback_query:
-        await update.callback_query.answer()
+        await _safe_answer_query(update.callback_query)
         await update.callback_query.message.reply_text(card, reply_markup=reply_markup, parse_mode="Markdown")
     else:
         await update.message.reply_text(card, reply_markup=reply_markup, parse_mode="Markdown")
@@ -313,30 +333,56 @@ async def callback_button_handler(update: Update, context: ContextTypes.DEFAULT_
         await disconnect_gmail_handler(update, context)
     elif data == "summary":
         await summary_handler(update, context)
+    elif data == "call_browser":
+        await call_browser_handler(update, context)
     elif data == "demo_hitl":
         await demo_hitl_handler(update, context)
     elif data == "help":
         await help_handler(update, context)
     elif data == "gmail_info":
-        await query.answer()
+        await _safe_answer_query(query)
         await query.message.reply_text(
             "ℹ️ *Gmail Engine is currently offline.*\nTap **Connect Gmail** to authenticate your account.",
             parse_mode="Markdown",
         )
     elif data == "hitl_approve":
-        await query.answer()
+        await _safe_answer_query(query)
         await query.edit_message_text(
             "✅ *Action Approved by Operator*\n\n"
             "LocalPilot resumed execution: decrypted credentials injected locally, order simulated successfully.",
             parse_mode="Markdown",
         )
     elif data == "hitl_reject":
-        await query.answer()
+        await _safe_answer_query(query)
         await query.edit_message_text(
             "❌ *Action Rejected by Operator*\n\n"
             "LocalPilot aborted operation. No payment was made and no external requests were dispatched.",
             parse_mode="Markdown",
         )
+    elif data == "browser_close":
+        await _safe_answer_query(query)
+        await asyncio.to_thread(browser_service.close_browser)
+        await query.edit_message_text(
+            "🔒 *Browser closed.* All Playwright resources released.",
+            parse_mode="Markdown",
+        )
+    elif data == "browser_keep":
+        await _safe_answer_query(query)
+        await query.edit_message_text(
+            "🖥️ *Browser kept open.* You can interact with it on your host machine.\n"
+            "Send `/close_browser` when you are done.",
+            parse_mode="Markdown",
+        )
+    elif data == "agent_toggle_pause":
+        new_state = browser_service.pause_agent()
+        status_word = "PAUSED ⏸️" if new_state else "RESUMED ▶️"
+        await _safe_answer_query(query, f"Agent {status_word}", show_alert=False)
+    elif data == "agent_go_back":
+        browser_service.trigger_go_back()
+        await _safe_answer_query(query, "Navigating back one step ⬅️", show_alert=False)
+    elif data == "agent_stop":
+        browser_service.stop_agent()
+        await _safe_answer_query(query, "Stopping agent loop 🛑", show_alert=False)
 
 
 async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -345,12 +391,18 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await unauthorized_warning(update)
         return
 
-    user_text = update.message.text.strip().lower()
+    user_text = update.message.text.strip()
+    user_lower = user_text.lower()
     logger.info(f"Incoming user instruction: {user_text}")
 
     # Natural language dispatch for email summaries
-    if any(keyword in user_text for keyword in ["email", "summary", "digest", "inbox", "mail"]):
+    if any(keyword in user_lower for keyword in ["email", "summary", "digest", "inbox", "mail"]):
         await summary_handler(update, context)
+        return
+
+    # Natural language dispatch for browser tasks: pass the actual user message as the task!
+    if any(keyword in user_lower for keyword in ["browse", "browser", "go to", "search", "open", "find", "github", "website", "check"]):
+        await call_browser_handler(update, context, custom_task=user_text)
         return
 
     response = (
@@ -360,9 +412,115 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         f"• Task queued for intent classification\n"
         f"• Model router: On-device vs. Cloud orchestration\n"
         f"• Execution engine: Ready for Playwright / Gmail REST module\n\n"
-        f"_(Full autonomous reasoning loop will connect to this handler)_"
+        f"_(Send a prompt like 'Go to github.com and find Ollama' to trigger web automation)_"
     )
     await update.message.reply_text(response, parse_mode="Markdown")
+
+
+async def call_browser_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, custom_task: Optional[str] = None) -> None:
+    """Launches Playwright browser and uses Ollama Qwen to autonomously navigate and answer."""
+    if not check_auth(update):
+        await unauthorized_warning(update)
+        return
+
+    # Use the user's custom typed message if provided, else fallback to default demo task
+    task = custom_task or "Open github.com/ndanevski1 and tell me how many repositories they have and their latest activity."
+
+    loading_msg = (
+        "🌐 *Browser Agent Activated*\n\n"
+        f"📋 *Task:* _{task}_\n\n"
+        "⚙️ *Status:*\n"
+        "• Launching visible Chromium browser on host...\n"
+        "• Initializing autonomous Qwen navigation loop...\n\n"
+        "⏳ _Please watch the browser on your screen as the agent navigates..._"
+    )
+
+    if update.callback_query:
+        await _safe_answer_query(update.callback_query)
+        msg_ref = await update.callback_query.message.reply_text(loading_msg, parse_mode="Markdown")
+    else:
+        msg_ref = await update.message.reply_text(loading_msg, parse_mode="Markdown")
+
+    loop = asyncio.get_running_loop()
+
+    def handle_step_update(step: int, max_steps: int, action_desc: str, current_url: str):
+        """Thread-safe real-time UI updater for Telegram."""
+        step_text = (
+            f"🌐 *Browser Agent Live Progress*\n\n"
+            f"📋 *Task:* _{task}_\n\n"
+            f"📊 *Status:* Step {step}/{max_steps}\n"
+            f"🤖 *Qwen Decision:* {action_desc}\n"
+            f"🔗 *URL:* `{current_url}`\n\n"
+            f"⏳ _Live agent loop in progress..._"
+        )
+        # Live control buttons during execution
+        live_controls = InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton("⏸️ Pause / Resume", callback_data="agent_toggle_pause"),
+                InlineKeyboardButton("⬅️ Go Back", callback_data="agent_go_back"),
+            ],
+            [
+                InlineKeyboardButton("🛑 Stop Agent", callback_data="agent_stop"),
+            ]
+        ])
+
+        try:
+            asyncio.run_coroutine_threadsafe(
+                msg_ref.edit_text(step_text, reply_markup=live_controls, parse_mode="Markdown"),
+                loop
+            )
+        except Exception:
+            pass
+
+    # Run the blocking browser + Ollama pipeline on a separate thread with the live updater
+    success, answer, final_url = await asyncio.to_thread(
+        browser_service.browse_and_answer,
+        task,
+        handle_step_update
+    )
+
+    if success:
+        # Build HITL buttons for browser control
+        keyboard = [
+            [
+                InlineKeyboardButton("✅ Close Browser", callback_data="browser_close"),
+                InlineKeyboardButton("🖥️ Keep Open", callback_data="browser_keep"),
+            ]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+
+        result_text = (
+            f"🌐 *Browser Agent Result*\n\n"
+            f"📋 *Task:* _{task}_\n\n"
+            f"🤖 *Qwen Answer:*\n{answer}\n\n"
+            f"🔗 *Final URL:* `{final_url}`\n\n"
+            f"_Would you like to close the browser or keep it open for inspection?_"
+        )
+        await msg_ref.edit_text(result_text, reply_markup=reply_markup, parse_mode="Markdown")
+    else:
+        await msg_ref.edit_text(
+            f"❌ *Browser Task Failed:*\n{answer}\n\n🔗 URL: `{final_url}`",
+            parse_mode="Markdown",
+        )
+
+
+async def close_browser_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handles the /close_browser command."""
+    if not check_auth(update):
+        await unauthorized_warning(update)
+        return
+
+    if browser_service.is_browser_open():
+        await asyncio.to_thread(browser_service.close_browser)
+        await update.message.reply_text(
+            "🔒 *Browser closed.* All Playwright resources released.",
+            parse_mode="Markdown",
+        )
+    else:
+        await update.message.reply_text(
+            "ℹ️ No browser is currently open.",
+            parse_mode="Markdown",
+        )
 
 
 def main() -> None:
@@ -372,7 +530,7 @@ def main() -> None:
         print("Error: Please specify TELEGRAM_BOT_TOKEN in your .env file.")
         return
 
-    logger.info("Initializing LocalPilot Telegram Bot with Gmail Engine...")
+    logger.info("Initializing LocalPilot Telegram Bot with Gmail + Browser Engine...")
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
     # Register Command Handlers
@@ -383,6 +541,8 @@ def main() -> None:
     app.add_handler(CommandHandler("connect_gmail", connect_gmail_handler))
     app.add_handler(CommandHandler("disconnect_gmail", disconnect_gmail_handler))
     app.add_handler(CommandHandler("demo_hitl", demo_hitl_handler))
+    app.add_handler(CommandHandler("call_browser", call_browser_handler))
+    app.add_handler(CommandHandler("close_browser", close_browser_handler))
 
     # Register Callback & Message Handlers
     app.add_handler(CallbackQueryHandler(callback_button_handler))
