@@ -20,6 +20,7 @@ import urllib.parse
 from typing import Tuple, Optional, Dict, Any, List, Callable
 from playwright.sync_api import sync_playwright, Page, Browser, BrowserContext
 import ollama
+import search_templates
 
 logger = logging.getLogger("LocalPilot.BrowserAgent")
 
@@ -52,7 +53,7 @@ def is_paused() -> bool:
 def infer_initial_url(task_description: str) -> str:
     """
     Infers the best starting URL from the user's natural language task prompt,
-    falling back to regex extraction or Google search.
+    checking curated popular templates, regex extraction, or Qwen semantic inference.
     """
     # 1. Check if the user explicitly provided an explicit URL or domain in the prompt
     explicit_match = re.search(r"(https?://\S+|[\w-]+\.(?:com|org|io|net|edu|gov)(?:/\S*)?)", task_description, re.IGNORECASE)
@@ -63,7 +64,17 @@ def infer_initial_url(task_description: str) -> str:
         logger.info(f"Explicit URL found in task: {url}")
         return url
 
-    # 2. Ask Qwen to infer the target starting root domain / website
+    # 2. Check the curated registry of top 100+ popular websites & search parameters
+    try:
+        resolved = search_templates.resolve_search_template(task_description)
+        if resolved:
+            formatted_url, site_name, query = resolved
+            logger.info(f"Matched curated search template for '{site_name}': {formatted_url} (query='{query}')")
+            return formatted_url
+    except Exception as e:
+        logger.warning(f"Error resolving search template: {e}")
+
+    # 3. Ask Qwen to infer the target starting root domain / website
     prompt = (
         "Given the user's task prompt, output ONLY the starting website's root domain homepage (e.g., https://scholar.google.com, https://github.com, https://sofia.edu, https://www.google.com).\n"
         "RULES: Output ONLY the base URL starting with https://. NEVER invent internal paths or query parameters like '?q=...' or '/searchbyquery'.\n\n"
@@ -89,7 +100,7 @@ def infer_initial_url(task_description: str) -> str:
     except Exception as e:
         logger.warning(f"Failed to infer URL with Qwen: {e}")
 
-    # 3. Universal fallback: start at Google Search for the task
+    # 4. Universal fallback: start at Google Search for the task
     encoded = urllib.parse.quote_plus(task_description)
     return f"https://www.google.com/search?q={encoded}"
 

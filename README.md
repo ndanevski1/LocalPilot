@@ -231,9 +231,17 @@ Telegram Instruction ──► URL Inference ──► Playwright Chromium (Visi
 ```
 
 ### 1. How Does the Agent Choose the Initial Website?
-When an instruction arrives:
-1. **Explicit URL Detection:** The agent runs a regex match for web links and domains (e.g., `https://...`, `github.com/username`, `sofia.edu`). If an explicit destination is mentioned, it navigates directly there.
-2. **Dynamic Semantic Inference:** If no URL is explicitly provided in the prompt (e.g., *"Find the latest tuition rates at Sofia University"*), Qwen infers the starting domain from prompt intent rather than hardcoding.
+When an instruction arrives, LocalPilot uses a multi-tiered resolution pipeline to ensure it lands on an authentic URL without hallucinating broken subpaths:
+
+1. **Curated Template Match (`search_templates.py`):**
+   - The engine checks a registry of **100+ popular platforms** across Academic (Google Scholar, PubMed, arXiv, Semantic Scholar), Developer (GitHub, GitLab, Stack Overflow, PyPI, Hugging Face), E-Commerce (Amazon, eBay, Best Buy), Knowledge (Wikipedia, Britannica), Social, and News sites.
+   - If the prompt targets a known service (e.g., *"Find the latest paper of Ivana Pacar on google scholar"*), it immediately maps to the exact, authentic query template (`https://scholar.google.com/scholar?q={query}`), bypassing hallucinated endpoints like `/searchbyquery` and saving round-trip latency.
+2. **Explicit URL Detection:**
+   - If the user provides a specific link or domain in their text (e.g., `https://...`, `github.com/ndanevski1`, `sofia.edu`), the agent extracts it with regex and navigates directly there.
+3. **Dynamic Root Domain Inference & Sanitization:**
+   - For open-ended prompts on unlisted sites, Qwen infers the starting domain. The URL is automatically parsed and sanitized to retain only the base root homepage (e.g., `https://example.com`), preventing the LLM from inventing broken query parameters.
+4. **Automated 404 & Broken Page Recovery:**
+   - If any page returns an HTTP 404, "Page Not Found", or broken server response, the agent **never stalls or crashes**. It intercepts the error, alerts the user in Telegram, and automatically falls back to a Google Search bridge (`google.com/search?q={task}`) to locate the active working link.
 
 ### 2. How Do We Parse the Website Tree?
 A raw HTML DOM tree on modern websites can exceed 50,000 lines of code, which would instantly exhaust the token context of on-device LLMs and cause heavy CPU latency. LocalPilot employs a **two-track extraction strategy**:
@@ -302,5 +310,8 @@ The snippet is a single 1,200-character plain text window extracted specifically
 
 #### 8. Can the agent complete tasks in fewer steps if the answer is found early?
 **Yes.** On every iteration of the ReAct loop, Qwen evaluates whether the goal has already been satisfied. If the target answer is visible in the `<main>` snippet or in the element labels (e.g. `[e14] <a> "Repositories 20"`), Qwen returns `{"action": "finish", "answer": "..."}` immediately without navigating further. If max steps (10) are reached, a synthesis prompt extracts the best possible answer from the final page.
+
+#### 9. Why not use OpenAPI/Swagger specs to discover search parameters?
+OpenAPI (`openapi.json`) is designed for developer-facing REST APIs (like Stripe or `api.github.com`), whereas consumer websites (Google Scholar, Amazon, university sites) do not publish OpenAPI specs for human-facing web searches. Instead, LocalPilot uses a **hybrid architecture**: it maintains an authentic 100+ site parameter registry in `search_templates.py` for deterministic fast-paths, and falls back to autonomous HTML search input discovery (`[e0] <input>`) for unlisted sites.
 
 
