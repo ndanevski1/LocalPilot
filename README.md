@@ -179,6 +179,22 @@ To opt out at any time, send `/disconnect_gmail` from Telegram or delete `token.
 
 ---
 
+### Step 7 (Optional): Manage Stored Credentials via Local Vault Dashboard
+
+LocalPilot provides a clean, local-only web dashboard to manage web credentials without exposing passwords over Telegram:
+
+```powershell
+# Launch the Local Vault Dashboard in your browser
+.\venv\Scripts\python vault_app.py
+```
+
+* **URL:** `http://127.0.0.1:8080` (strictly bound to `localhost`, zero outside network exposure).
+* **Encryption:** AES-256 (Fernet) authenticated field encryption over SQLite (`vault/vault.db`).
+* **Hardware Gate:** Revealing passwords triggers native Windows Device PIN / Password authentication (`CredUIPromptForWindowsCredentials`).
+* **Auto-Masking:** Unmasked passwords automatically re-mask after 15 seconds for shoulder-surfing protection.
+
+---
+
 ## 📱 How to Use & Test from Your Mobile Device (Android / iOS / Mac)
 
 Now that the daemon is running on your host computer:
