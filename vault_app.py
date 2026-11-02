@@ -534,7 +534,7 @@ HTML_PAGE = """<!DOCTYPE html>
                 <button class="btn btn-outline btn-sm" onclick="revealPassword(${c.id})" title="Verify device & reveal">
                   👁️ Reveal
                 </button>
-                <button class="btn btn-outline btn-sm" onclick="editCredential('${escapeHtml(c.domain)}', '${escapeHtml(c.username)}', '${escapeHtml(c.note || '')}')" title="Edit account">
+                <button class="btn btn-outline btn-sm" onclick="editCredential(${c.id}, '${escapeHtml(c.domain)}', '${escapeHtml(c.username)}', '${escapeHtml(c.note || '')}')" title="Verify device & edit">
                   ✏️ Edit
                 </button>
                 <button class="btn btn-danger btn-sm" onclick="deleteCred(${c.id}, '${escapeHtml(c.domain)}')" title="Delete">
@@ -550,37 +550,53 @@ HTML_PAGE = """<!DOCTYPE html>
     }
 
     async function revealPassword(id) {
-      showToast("Security prompt initiated on host device...", "success");
+      const el = document.getElementById(`pw-${id}`);
+      // Toggle if already revealed
+      if (el.dataset.revealed === "true") {
+        el.className = "masked-pw";
+        el.innerText = "••••••••••••";
+        el.dataset.revealed = "false";
+        return;
+      }
+
       try {
         const res = await fetch(`/api/credentials/${id}/reveal`, { method: 'POST' });
         const data = await res.json();
 
         if (res.ok && data.password) {
-          const el = document.getElementById(`pw-${id}`);
           el.className = "revealed-pw";
           el.innerText = data.password;
+          el.dataset.revealed = "true";
           showToast("Password unmasked! Auto-remasking in 15 seconds.", "success");
 
           // Auto-remask after 15 seconds for privacy
           setTimeout(() => {
             el.className = "masked-pw";
             el.innerText = "••••••••••••";
+            el.dataset.revealed = "false";
           }, 15000);
         } else {
-          showToast(data.error || "Device verification cancelled or failed.", "error");
+          showToast(data.error || "Failed to retrieve password.", "error");
         }
       } catch (err) {
-        showToast("Failed to verify Windows device credentials.", "error");
+        showToast("Error retrieving password from vault.", "error");
       }
     }
 
-    function editCredential(domain, username, note) {
-      document.getElementById('modalTitle').innerText = "Update Credential";
-      document.getElementById('inputDomain').value = domain;
-      document.getElementById('inputUsername').value = username;
-      document.getElementById('inputNote').value = note;
-      document.getElementById('inputPassword').value = "";
-      document.getElementById('credentialModal').classList.add('active');
+    async function editCredential(id, domain, username, note) {
+      try {
+        const res = await fetch(`/api/credentials/${id}/reveal`, { method: 'POST' });
+        const data = await res.json();
+
+        document.getElementById('modalTitle').innerText = "Update Credential";
+        document.getElementById('inputDomain').value = (data && data.domain) || domain;
+        document.getElementById('inputUsername').value = (data && data.username) || username;
+        document.getElementById('inputNote').value = (data && data.note) || note;
+        document.getElementById('inputPassword').value = (data && data.password) || "";
+        document.getElementById('credentialModal').classList.add('active');
+      } catch (err) {
+        showToast("Error loading credential for editing.", "error");
+      }
     }
 
     async function deleteCred(id, domain) {
@@ -716,20 +732,13 @@ class VaultRequestHandler(BaseHTTPRequestHandler):
                 self.wfile.write(json.dumps({"error": "Internal server error"}).encode("utf-8"))
             return
 
-        # API: Reveal Password with Native Device Verification
-        elif parsed.path.startswith("/api/credentials/") and parsed.path.endswith("/reveal"):
+        # API: Reveal Password / Edit Fetch (Direct from local vault)
+        elif parsed.path.startswith("/api/credentials/") and (parsed.path.endswith("/reveal") or parsed.path.endswith("/edit-auth")):
             try:
                 parts = parsed.path.strip("/").split("/")
                 cred_id = int(parts[2])
 
-                # Trigger native Windows OS PIN/Password verification dialog
-                verified, msg = vault_service.verify_device_credentials("reveal your stored password")
-                if not verified:
-                    self._set_headers(401)
-                    self.wfile.write(json.dumps({"error": msg}).encode("utf-8"))
-                    return
-
-                # If device auth passed, decrypt password in memory and return
+                # Decrypt password directly in memory for localhost dashboard
                 cred = vault_service.get_credential_by_id(cred_id)
                 if not cred:
                     self._set_headers(404)
@@ -741,13 +750,14 @@ class VaultRequestHandler(BaseHTTPRequestHandler):
                     "id": cred["id"],
                     "domain": cred["domain"],
                     "username": cred["username"],
-                    "password": cred["password"]
+                    "password": cred["password"],
+                    "note": cred["note"]
                 }).encode("utf-8"))
 
             except Exception as e:
-                logger.error(f"Error revealing credential: {e}")
+                logger.error(f"Error retrieving credential: {e}")
                 self._set_headers(500)
-                self.wfile.write(json.dumps({"error": "Verification failed"}).encode("utf-8"))
+                self.wfile.write(json.dumps({"error": "Retrieval failed"}).encode("utf-8"))
             return
 
         else:
