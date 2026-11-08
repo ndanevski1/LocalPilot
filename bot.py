@@ -8,6 +8,7 @@ import platform
 import logging
 import asyncio
 from datetime import datetime
+from typing import Optional
 from dotenv import load_dotenv
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -142,7 +143,7 @@ async def status_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         email_addr = gmail_service.get_connected_email() or "Google User"
         gmail_status = f"🟢 Connected (`{email_addr}`)"
     else:
-        gmail_status = "⚪ Disconnected (Run /connect_gmail)"
+        gmail_status = "⚪ Disconnected (Run `/connect_gmail`)"
 
     status_message = (
         f"📊 *LocalPilot Host Status*\n\n"
