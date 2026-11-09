@@ -42,7 +42,24 @@ wheels/
 *.db
 *.sqlite3
 vault/
+.vault_key
+.vault_salt
+
+# Logs
 localpilot.log
+*.log
+
+# Browser automation data (profiles, traces, recordings, screenshots)
+browser_data/
+browser_profile/
+user_data/
+user-data-dir/
+playwright-data/
+.playwright/
+*.har
+trace.zip
+traces/
+screenshots/
 
 # OS specific
 .DS_Store
