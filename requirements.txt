@@ -5,3 +5,4 @@ google-auth-oauthlib>=1.2.0
 google-api-python-client>=2.0.0
 playwright>=1.40.0
 ollama>=0.4.0
+cryptography>=42.0.0

@@ -5,13 +5,11 @@ Runs on http://127.0.0.1:8080 (strictly localhost, isolated from external access
 Zero dependencies on Telegram or external web frameworks.
 """
 
-import os
-import sys
 import json
 import webbrowser
 import logging
 from http.server import HTTPServer, BaseHTTPRequestHandler
-from urllib.parse import urlparse, parse_qs
+from urllib.parse import urlparse
 
 import vault_service
 
@@ -423,7 +421,7 @@ HTML_PAGE = """<!DOCTYPE html>
         <div class="brand-icon">🛡️</div>
         <div>
           <div class="brand-title">LocalPilot Vault</div>
-          <div class="brand-subtitle">Zero-Trust On-Device Credential Engine</div>
+          <div class="brand-subtitle">Local On-Device Credential Store</div>
         </div>
       </div>
       <div class="badge-secure">
@@ -531,10 +529,10 @@ HTML_PAGE = """<!DOCTYPE html>
             <td style="color: var(--text-muted); font-size: 13px;">${escapeHtml(c.note || '—')}</td>
             <td>
               <div class="action-group">
-                <button class="btn btn-outline btn-sm" onclick="revealPassword(${c.id})" title="Verify device & reveal">
+                <button class="btn btn-outline btn-sm" onclick="revealPassword(${c.id})" title="Reveal password">
                   👁️ Reveal
                 </button>
-                <button class="btn btn-outline btn-sm" onclick="editCredential(${c.id}, '${escapeHtml(c.domain)}', '${escapeHtml(c.username)}', '${escapeHtml(c.note || '')}')" title="Verify device & edit">
+                <button class="btn btn-outline btn-sm" onclick="editCredential(${c.id}, '${escapeHtml(c.domain)}', '${escapeHtml(c.username)}', '${escapeHtml(c.note || '')}')" title="Edit credential">
                   ✏️ Edit
                 </button>
                 <button class="btn btn-danger btn-sm" onclick="deleteCred(${c.id}, '${escapeHtml(c.domain)}')" title="Delete">
@@ -792,12 +790,12 @@ class VaultRequestHandler(BaseHTTPRequestHandler):
 
 def main():
     print("=" * 65)
-    print(" LocalPilot — Zero-Trust Encrypted Vault Dashboard")
+    print(" LocalPilot — Local Encrypted Vault Dashboard")
     print("=" * 65)
     print(f"Server running locally at: http://{HOST}:{PORT}")
     print("Security: Bound strictly to 127.0.0.1 (No external/network access)")
-    print("Storage:  AES-256 (Fernet) field encryption + SQLite (vault/vault.db)")
-    print("Auth:     Protected by native Windows Device PIN/Password")
+    print("Storage:  SQLite (vault/vault.db) with Fernet-encrypted password field")
+    print("Auth:     NONE - anyone using this Windows account can reveal passwords")
     print("=" * 65)
     print("Opening web dashboard in your default browser...")
     print("Press Ctrl+C to stop the vault server.\n")

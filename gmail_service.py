@@ -13,7 +13,12 @@ from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
+from safety import h, truncate
+
 logger = logging.getLogger("LocalPilot.Gmail")
+
+# Where users can fully revoke LocalPilot's Google authorization grant.
+GOOGLE_PERMISSIONS_URL = "https://myaccount.google.com/permissions"
 
 # Allow Google OAuth server to return additional default scopes (like openid) without throwing ScopeChanged error
 os.environ["OAUTHLIB_RELAX_TOKEN_SCOPE"] = "1"
@@ -110,17 +115,27 @@ def authenticate() -> Tuple[bool, str]:
         return False, f"Authentication failed: {str(e)}"
 
 
+REVOKE_NOTE = (
+    "Deleting token.json only removes the token stored on this computer. It does not "
+    "necessarily revoke the authorization you granted to LocalPilot in your Google account. "
+    f"To revoke it completely, remove LocalPilot at {GOOGLE_PERMISSIONS_URL}"
+)
+
+
 def disconnect() -> Tuple[bool, str]:
-    """Removes the local token.json file to revoke local access (opt-out)."""
+    """
+    Removes the local token.json file (local opt-out).
+    This does NOT revoke the Google authorization grant; see REVOKE_NOTE.
+    """
     if os.path.exists(TOKEN_FILE):
         try:
             os.remove(TOKEN_FILE)
             logger.info("Local token.json deleted.")
-            return True, "Gmail has been disconnected. Your local session token was deleted."
+            return True, "Gmail has been disconnected on this computer. The local token file was deleted."
         except Exception as e:
-            logger.error(f"Failed to delete {TOKEN_FILE}: {e}")
-            return False, f"Failed to remove token: {e}"
-    return True, "Gmail was not connected."
+            logger.error(f"Failed to delete token file: {type(e).__name__}")
+            return False, "Failed to remove the local token file. Check file permissions and try again."
+    return True, "Gmail was not connected on this computer."
 
 
 def get_unread_emails(max_results: int = 5) -> Tuple[bool, List[Dict], str]:
@@ -130,7 +145,7 @@ def get_unread_emails(max_results: int = 5) -> Tuple[bool, List[Dict], str]:
     """
     creds = get_credentials()
     if not creds:
-        return False, [], "Gmail is not connected. Use `/connect_gmail` to authenticate."
+        return False, [], "Gmail is not connected. Use /connect_gmail to authenticate."
 
     try:
         service = build("gmail", "v1", credentials=creds)
@@ -188,24 +203,25 @@ def get_unread_emails(max_results: int = 5) -> Tuple[bool, List[Dict], str]:
 
 
 def format_email_digest(emails: List[Dict]) -> str:
-    """Formats a list of email dictionaries into a clean Telegram Markdown summary."""
+    """
+    Formats a list of email dictionaries into a Telegram HTML summary.
+    Sender, subject and preview are escaped, so any characters are safe.
+    The digest is sent to Telegram only and is never written to logs.
+    """
     if not emails:
-        return "📭 *Inbox Zero:* No unread messages in your Primary inbox."
+        return "📭 <b>Inbox Zero:</b> No unread messages in your Primary inbox."
 
-    output = [f"📬 *Primary Inbox Digest ({len(emails)} unread)*\n"]
+    output = [f"📬 <b>Primary Inbox Digest ({len(emails)} unread)</b>\n"]
     for i, mail in enumerate(emails, 1):
-        # Clean sender: extract name or email
-        sender = mail["sender"]
-        subject = mail["subject"]
-        snippet = mail["snippet"]
-        if len(snippet) > 120:
-            snippet = snippet[:117] + "..."
+        sender = truncate(mail.get("sender", ""), 120)
+        subject = truncate(mail.get("subject", ""), 200)
+        snippet = truncate(mail.get("snippet", ""), 120)
 
-        output.append(f"*{i}. {subject}*")
-        output.append(f"• **From:** `{sender}`")
+        output.append(f"<b>{i}. {h(subject)}</b>")
+        output.append(f"• <b>From:</b> <code>{h(sender)}</code>")
         if snippet:
-            output.append(f"• **Preview:** _{snippet}_")
+            output.append(f"• <b>Preview:</b> <i>{h(snippet)}</i>")
         output.append("")  # Blank line separator
 
-    output.append("💡 _LocalPilot Module 4: Gmail REST API Engine_")
+    output.append("💡 <i>LocalPilot Module 4: Gmail REST API Engine</i>")
     return "\n".join(output)

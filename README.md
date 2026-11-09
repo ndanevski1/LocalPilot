@@ -4,16 +4,41 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=flat-square)](LICENSE)
 ![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-blue?style=flat-square&logo=python)
 
-LocalPilot is an open-source, local-first autonomous AI action agent that runs directly on your computer to handle digital chores—such as compiling email digests and managing web purchases—while keeping private credentials and session data encrypted strictly on your host hardware.
+LocalPilot is an open-source, local-first AI action agent that runs directly on your computer. Today it summarizes your Gmail inbox and runs supervised web-browsing tasks with a local model; web purchases with stored credentials are planned. Everything runs on your host machine, controlled from Telegram.
 
 > 📖 **Looking for full system specifications and architecture?**  
 > See [PROJECT_DETAILS.md](PROJECT_DETAILS.md) for the complete Software Requirements Specification (SRS), team roles, and module roadmap.
 
 ---
 
+## ✅ Feature Status
+
+What the code does today, what is only a demonstration, and what is still planned.
+
+### Implemented
+* **Telegram remote control** (`bot.py`): outbound long-polling, no open ports. Every command, message and button press is checked against `TELEGRAM_ALLOWED_USER_ID`.
+* **Locked-down setup mode:** if `TELEGRAM_ALLOWED_USER_ID` is empty, the bot only tells you your own Telegram ID; every feature is disabled. With `LOCALPILOT_ENV=production` the bot refuses to start without it.
+* **Gmail digest** (`gmail_service.py`): read-only OAuth scope (`gmail.readonly`), 5 latest unread Primary-inbox emails. Email content is sent to Telegram only and never logged.
+* **Autonomous browser agent** (`browser_service.py`): Playwright (visible Chromium) + local Ollama `qwen2.5:3b`, with live Pause / Go Back / Stop controls.
+* **Human-in-the-Loop approval gate for the browser agent** (`action_policy.py`, `approval_gate.py`): every action is classified as read-only or state-changing *in code*. State-changing actions (button clicks, form typing) must pass website, spending and completeness checks, then wait for your **Approve** in Telegram. Approvals are tied to your user ID, single-use, bound to the exact action, and expire after 30 minutes.
+* **Prompt-injection and secret safeguards:** webpage text is fenced as untrusted data; passwords, tokens and card numbers are redacted from every model prompt and from `localpilot.log`; form-field values are never read from pages; the agent never types into password fields.
+* **Local credential vault dashboard** (`vault_app.py`, `vault_service.py`): `http://127.0.0.1:8080`, SQLite with Fernet-encrypted password field (see [Step 7](#step-7-optional-manage-stored-credentials-via-local-vault-dashboard) for its real limits).
+
+### Demonstration only
+* **`/demo_hitl`** shows a *simulated* purchase approval. It uses the real approval gate (tracking, single use, 30-minute expiry) but nothing is bought, no payment is made and no credentials are used.
+
+### Planned (not implemented)
+* Using vault credentials in the browser (local credential injection with placeholder tokens).
+* Real purchases / checkout flows (state-changing actions are gated, but there is no purchase workflow).
+* Windows PIN / Windows Hello protection for revealing vault passwords.
+* SQLCipher whole-database encryption and AES-256 (the current Fernet scheme uses AES-128-CBC + HMAC).
+* Hybrid local/cloud model routing (only the local Ollama model is used), FastAPI / WebSockets backend, ARIA accessibility-tree parsing, screenshots in Telegram.
+
+---
+
 ## 💡 How LocalPilot Works: Remote Control vs. Engine
 
-LocalPilot follows a **zero-trust, distributed architecture**. There is no central cloud server holding user passwords:
+LocalPilot follows a **local-first, distributed architecture**. There is no central cloud server holding user passwords:
 
 ```
 ┌──────────────────────────────────────────────┐
@@ -28,7 +53,7 @@ LocalPilot follows a **zero-trust, distributed architecture**. There is no centr
 └──────────────────────────────────────────────┘
 ```
 
-1. **Host Computer (The Engine):** Runs the Python daemon on your Windows, macOS, or Linux machine. This is where web automations (Playwright), local AI models (Ollama), and encrypted credential vaults reside.
+1. **Host Computer (The Engine):** Runs the Python daemon on your Windows, macOS, or Linux machine. This is where web automations (Playwright), the local AI model (Ollama), and the local credential vault reside.
 2. **Mobile Device (The Remote Control):** Runs the regular Telegram messaging app (Android or iOS). You do **not** run Python or code on your phone—you simply chat with your bot to issue instructions and approve actions.
 3. **Zero Port Forwarding:** Uses outbound long-polling. No open router ports, public IP addresses, or webhooks are needed.
 
@@ -94,7 +119,19 @@ TELEGRAM_BOT_TOKEN="your_bot_token_here"
 TELEGRAM_ALLOWED_USER_ID="your_telegram_numeric_id_here"
 ```
 
-> 🔒 **Security Notice:** The `.env` file is explicitly ignored in `.gitignore` and will never be pushed to GitHub.
+> ⚠️ **`TELEGRAM_ALLOWED_USER_ID` is required for normal use.** If you leave it empty, the bot starts in *setup mode*: it only replies to `/start` with the sender's Telegram ID and every feature is disabled. Set `LOCALPILOT_ENV="production"` to make the bot refuse to start without it.
+
+Optional browser-agent safety settings (defaults are the safest values):
+```env
+# Sites where the agent may *request approval* for state-changing actions (button clicks, form typing).
+# Empty = state-changing actions are always blocked; read-only browsing still works everywhere.
+LOCALPILOT_ALLOWED_SITES="example-shop.com,another-site.org"
+# Maximum purchase amount the agent may request approval for. 0 = no purchases.
+LOCALPILOT_SPEND_LIMIT="0"
+LOCALPILOT_CURRENCY="USD"
+```
+
+> 🔒 **Security Notice:** `.env`, `token.json`, `credentials.json`, `vault/`, `localpilot.log` and browser data folders are ignored in `.gitignore` and will never be pushed to GitHub. Secrets such as the bot token are redacted from `localpilot.log`.
 
 ---
 
@@ -177,6 +214,10 @@ Your browser will open with Google's consent screen. Select your account and gra
 
 To opt out at any time, send `/disconnect_gmail` from Telegram or delete `token.json` from your project folder.
 
+> ⚠️ **Deleting `token.json` only removes the token stored on your computer.** It does not necessarily revoke the authorization you granted to LocalPilot in your Google account. To revoke it completely, remove LocalPilot at [myaccount.google.com/permissions](https://myaccount.google.com/permissions).
+
+The Gmail scope is read-only (`gmail.readonly`, plus `openid` and `userinfo.email` to show which account is connected). LocalPilot cannot send, delete or modify email.
+
 ---
 
 ### Step 7 (Optional): Manage Stored Credentials via Local Vault Dashboard
@@ -188,10 +229,12 @@ LocalPilot provides a clean, local-only web dashboard to manage web credentials 
 .\venv\Scripts\python vault_app.py
 ```
 
-* **URL:** `http://127.0.0.1:8080` (strictly bound to `localhost`, zero outside network exposure).
-* **Encryption:** AES-256 (Fernet) authenticated field encryption over SQLite (`vault/vault.db`).
-* **Hardware Gate:** Revealing passwords triggers native Windows Device PIN / Password authentication (`CredUIPromptForWindowsCredentials`).
-* **Auto-Masking:** Unmasked passwords automatically re-mask after 15 seconds for shoulder-surfing protection.
+* **URL:** `http://127.0.0.1:8080` (bound to `localhost` only, not reachable from other machines).
+* **Storage:** plain SQLite database (`vault/vault.db`, **not** SQLCipher). Only the password column is encrypted, using [Fernet](https://cryptography.io/en/latest/fernet/) (AES-128-CBC + HMAC-SHA256). Domains, usernames and notes are stored in plain text.
+* **Key storage:** the Fernet key is stored in `vault/.vault_key` next to the database. Anyone who can read the `vault/` folder can decrypt the passwords, so protection relies on your Windows user account and its file permissions.
+* **No extra authentication:** revealing or editing a password in the dashboard does **not** ask for a Windows PIN, Windows Hello or any password. Anyone using your logged-in Windows account can open the dashboard and reveal passwords. (A Windows PIN check is planned, not implemented.)
+* **Auto-Masking:** revealed passwords re-mask in the browser after 15 seconds.
+* **Not connected to the agent yet:** the browser agent does not read the vault; credential injection is planned.
 
 ---
 
@@ -211,18 +254,18 @@ Now that the daemon is running on your host computer:
 | **`📊 System Status`** (`/status`) | Queries the host computer in real-time and returns OS platform, Python version, Gmail connection, and connectivity diagnostics. |
 | **`📬 Unread Email Digest`** (`/summary`) | Fetches the 5 latest unread emails from your **Primary inbox** (Promotions, Social, and Updates filtered out). |
 | **`🔗 Connect Gmail`** (`/connect_gmail`) | Displays instructions for running the one-time `setup_gmail.py` Google OAuth flow on the host computer. |
-| **`🔌 Disconnect Gmail`** (`/disconnect_gmail`) | Deletes the local `token.json` session token to immediately opt out of Gmail access. |
-| **`🛡️ Test HITL Approval`** (`/demo_hitl`) | Triggers a **Human-in-the-Loop** simulation card with **[Approve ✅]** and **[Reject ❌]** buttons (demonstrating SRS Module 3). |
-| **`🌐 Call Browser`** (`/call_browser`) | Launches the visible Chromium browser on the host machine to execute autonomous web browsing tasks via Ollama (`qwen2.5:3b`). |
+| **`🔌 Disconnect Gmail`** (`/disconnect_gmail`) | Deletes the local `token.json`. This does not necessarily revoke the Google grant; the reply links to your Google account permissions page. |
+| **`🛡️ Test HITL Approval`** (`/demo_hitl`) | **Simulation.** Shows a fictional purchase card with **[Approve ✅]** and **[Reject ❌]** buttons. It uses the real approval gate (single use, 30-minute expiry), but nothing is bought and no credentials are used. |
+| **`🌐 Call Browser`** (`/call_browser [task]`) | Launches the visible Chromium browser on the host machine to run a browsing task via Ollama (`qwen2.5:3b`). Without a task it runs the default: *"Open https://example.com and tell me the page title."* |
 | **`🔒 Close Browser`** (`/close_browser`) | Manually terminates the active browser instance and cleans up Playwright memory. |
 | **`❓ Help`** (`/help`) | Displays operator command reference. |
-| **Natural Language Prompts** | Send any text message (e.g., *"Check github.com/ndanevski1 and count their repositories"* or *"Summarize my unread emails"*) to test natural language dispatch. |
+| **Natural Language Prompts** | Send any text message (e.g., *"Open example.com and tell me the page title"* or *"Summarize my unread emails"*) to test natural language dispatch. |
 
 ---
 
 ## 🌐 Autonomous Web Browsing Engine (ReAct Architecture & DOM Parsing)
 
-LocalPilot features an on-device, autonomous web browsing engine powered by **Playwright** (`headless=False`) and a local **Ollama** LLM (`qwen2.5:3b`). The engine allows you to prompt the agent from Telegram (e.g., *"Check github.com/ndanevski1 and tell me how many repositories they have"*), watch Chromium operate live on your host screen, and intervene at any time.
+LocalPilot features an on-device, autonomous web browsing engine powered by **Playwright** (`headless=False`) and a local **Ollama** LLM (`qwen2.5:3b`). The engine allows you to prompt the agent from Telegram (e.g., *"Open example.com and tell me the page title"*), watch Chromium operate live on your host screen, and intervene at any time.
 
 ```
 Telegram Instruction ──► URL Inference ──► Playwright Chromium (Visible)
@@ -253,7 +296,7 @@ When an instruction arrives, LocalPilot uses a multi-tiered resolution pipeline 
    - The engine checks a registry of **100+ popular platforms** across Academic (Google Scholar, PubMed, arXiv, Semantic Scholar), Developer (GitHub, GitLab, Stack Overflow, PyPI, Hugging Face), E-Commerce (Amazon, eBay, Best Buy), Knowledge (Wikipedia, Britannica), Social, and News sites.
    - If the prompt targets a known service (e.g., *"Find the latest paper of Ivana Pacar on google scholar"*), it immediately maps to the exact, authentic query template (`https://scholar.google.com/scholar?q={query}`), bypassing hallucinated endpoints like `/searchbyquery` and saving round-trip latency.
 2. **Explicit URL Detection:**
-   - If the user provides a specific link or domain in their text (e.g., `https://...`, `github.com/ndanevski1`, `sofia.edu`), the agent extracts it with regex and navigates directly there.
+   - If the user provides a specific link or domain in their text (e.g., `https://...`, `example.com`, `sofia.edu`), the agent extracts it with regex and navigates directly there.
 3. **Dynamic Root Domain Inference & Sanitization:**
    - For open-ended prompts on unlisted sites, Qwen infers the starting domain. The URL is automatically parsed and sanitized to retain only the base root homepage (e.g., `https://example.com`), preventing the LLM from inventing broken query parameters.
 4. **Automated 404 & Broken Page Recovery:**
@@ -288,7 +331,7 @@ The model returns **exactly one JSON action**:
 4. `{"action": "finish", "answer": "..."}` — Completes the task with findings.
 
 #### Action Validation & Self-Healing:
-* **Editable Tag Guardrails:** Before calling Playwright's `fill()`, the agent verifies that the target element is an `<input>`, `<textarea>`, `<select>`, or `contenteditable`. If the model mistakenly issues a `"type"` action on a link `<a>` or button `<button>`, LocalPilot catches it and safely redirects the action to a `click()` instead of crashing.
+* **Editable Tag Guardrails:** Typing is only allowed into `<input>`, `<textarea>` or `contenteditable` elements, and never into password fields. A `"type"` action on a link or button is blocked; it is *not* converted into a click, because that would skip the approval gate.
 * **Per-Action Exception Shields:** Every individual action (`click`, `type`, `navigate`) is wrapped in isolated `try...except` error handlers. If an element detaches or a navigation times out, the failure is appended to `history` and the loop continues, allowing the model to recover on the next step.
 * **Early Finish Detection:** If the answer to the task is already visible in the snippet or element labels, Qwen is instructed to trigger `"finish"` immediately without unnecessary navigation.
 
@@ -298,6 +341,40 @@ While the browser runs on your desktop, your Telegram card updates in real-time 
 * **⬅️ Go Back:** Commands the browser to perform a `history.back()`, useful if the model clicked an unwanted link.
 * **🛑 Stop Agent:** Immediately aborts the loop and releases browser control.
 * **✅ Close Browser / 🖥️ Keep Open:** Post-completion options allowing you to inspect the final state or close Chromium.
+
+### 5. Approval Gate for State-Changing Actions (SRS Module 3)
+Every action the model proposes is validated and classified by LocalPilot's code (`action_policy.py`), not by the model:
+
+| Category | Examples | What happens |
+| :--- | :--- | :--- |
+| **Read-only** | `navigate` to an http(s) URL, clicking a normal link, typing a query into a search box, `finish` | Runs immediately. |
+| **State-changing** | Clicking a button or a JavaScript link, typing into any other form field | Policy checks, then pauses for your approval in Telegram. |
+| **Blocked** | `javascript:`/`file:`/`chrome:` URLs, password fields, unknown element IDs, unknown actions | Never runs. The model is told it was blocked. |
+
+**Policy checks before approval is requested** (all must pass):
+1. The website is in `LOCALPILOT_ALLOWED_SITES` (empty by default, which blocks all state-changing actions).
+2. The action details are complete (known website, labelled target element, text to type).
+3. Purchases (buttons such as *Buy*, *Checkout*, *Place order*) state an amount within `LOCALPILOT_SPEND_LIMIT` (0 by default, which blocks all purchases) in `LOCALPILOT_CURRENCY`. The amount is reported by the model, so check it against the page before approving.
+
+**Approval rules** (`approval_gate.py`): each request has a unique ID, belongs to your Telegram user ID, stores a fingerprint of the exact action, and records creation time, a 30-minute expiry and a used/unused status. An approval is accepted only once, only from you, and only before it expires. Right before execution the agent re-reads the element on the live page; if anything changed since you approved, the action is cancelled. Rejecting, letting it expire, or pressing 🛑 Stop cancels the action and ends the task.
+
+**Prompt-injection protection:** page text, element labels and URLs are passed to the model inside an `<<<UNTRUSTED_WEB_CONTENT>>>` fence, and the system prompt tells the model never to follow instructions found there. Even if a page convinces the model, the model has no way to approve or skip the gate, because classification and approval are enforced outside it.
+
+**Secrets:** every prompt goes through one function that redacts passwords, tokens, API keys and card numbers before Ollama sees them. Form-field values (which may hold autofilled passwords) are never read from the page, and typed text is not written to the log.
+
+---
+
+## 🧪 Running the Tests
+
+The tests use mocks and fake data only (no Telegram, Gmail, Ollama or real browser needed):
+
+```powershell
+python -m unittest discover -v
+python -m compileall -q .
+pip install pip-audit ruff   # dev tools, not runtime requirements
+pip-audit -r requirements.txt
+ruff check .
+```
 
 ---
 
@@ -310,7 +387,7 @@ While the browser runs on your desktop, your Telegram card updates in real-time 
 Desktop web automation (Playwright/Chromium), encrypted SQLite vaults, and local LLMs (Ollama) require desktop operating system capabilities and compute power. Android aggressively terminates background processes to save battery. The phone is intentionally designed to serve as a lightweight **remote control**, while your computer acts as the **worker**.
 
 #### 3. What happens if an unauthorized person messages my bot?
-If `TELEGRAM_ALLOWED_USER_ID` is set in your `.env`, LocalPilot will reject any incoming commands or callbacks from unfamiliar users with an `⛔ Access Denied` alert.
+LocalPilot checks the sender of every command, message **and button press** against `TELEGRAM_ALLOWED_USER_ID` and rejects anyone else with `⛔ Access Denied`. If the value is empty, the bot is in setup mode: it only tells people their own Telegram ID and does nothing else for anyone.
 
 #### 4. Does my computer need to stay on?
 Yes. Because LocalPilot is a local-first agent that runs private tasks on your hardware, the host machine must be on and running `bot.py` while receiving remote instructions.

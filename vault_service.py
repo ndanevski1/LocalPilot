@@ -1,16 +1,27 @@
 """
 LocalPilot — Encrypted Credential Vault Service (Module 3)
-Provides zero-trust local storage for sensitive web credentials.
-Uses SQLite with authenticated AES-256 (Fernet) field encryption, PBKDF2 key derivation,
-and native Windows OS credentials prompt (CredUIPromptForWindowsCredentials / LogonUser).
+Local storage for web credentials.
+
+What is implemented:
+  * Plain SQLite database (vault/vault.db) — not SQLCipher; only the password
+    column is encrypted.
+  * Passwords are encrypted with Fernet (AES-128-CBC + HMAC-SHA256, authenticated).
+  * The Fernet key is derived once with PBKDF2-SHA256 from the computer and user name
+    plus a random salt, then stored in vault/.vault_key next to the database.
+    Anyone who can read the vault/ folder can therefore decrypt the passwords; the
+    protection comes from the Windows user account's file permissions.
+
+What is NOT implemented:
+  * No Windows PIN / Windows Hello / CredUI prompt. Revealing a password in the
+    dashboard requires no extra authentication.
+  * The browser agent does not use this vault yet (credential injection is planned).
 """
 
 import os
-import sys
 import base64
 import sqlite3
 import logging
-from typing import List, Dict, Optional, Tuple, Any
+from typing import List, Dict, Optional, Any
 from datetime import datetime
 
 from cryptography.fernet import Fernet

@@ -4,7 +4,6 @@ Run this in your terminal to authenticate your Google Account.
 """
 
 import os
-import sys
 
 # Relax token scope check so Google's default 'openid' scope does not trigger ScopeChanged exception
 os.environ["OAUTHLIB_RELAX_TOKEN_SCOPE"] = "1"
