@@ -33,6 +33,7 @@ import logging
 import re
 import urllib.parse
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 from typing import Tuple, Optional, Dict, Any, List, Callable
 from playwright.sync_api import sync_playwright, Page, Browser, BrowserContext
 import ollama
@@ -41,11 +42,15 @@ import action_policy
 import approval_gate
 import safety
 import search_templates
+import login_recipes
 
 logger = logging.getLogger("LocalPilot.BrowserAgent")
 
 OLLAMA_MODEL = "qwen2.5:3b"
 MAX_AGENT_STEPS = 10
+
+# Persistent browser profile storage (located under vault/ so it is fully ignored by git)
+BROWSER_PROFILE_DIR = Path(__file__).resolve().parent / "vault" / "browser_profile"
 
 _browser: Optional[Browser] = None
 _context: Optional[BrowserContext] = None
@@ -187,32 +192,33 @@ def stop_agent() -> None:
 
 
 def _ensure_browser() -> Page:
-    """Launches or reuses a visible Chromium browser and returns the active page."""
-    global _browser, _context, _page, _playwright
+    """
+    Launches or reuses a visible Chromium browser with persistent session storage.
+    Session cookies, tokens, and storage are preserved in vault/browser_profile/
+    so logins (Amazon, GitHub, Reddit) persist across agent runs without being uploaded to Git.
+    """
+    global _context, _page, _playwright
 
     if _page and not _page.is_closed():
         return _page
 
     close_browser()
 
-    logger.info("Launching visible Chromium browser (headless=False)...")
+    logger.info("Launching visible Chromium browser with persistent profile (headless=False)...")
+    BROWSER_PROFILE_DIR.mkdir(parents=True, exist_ok=True)
     _playwright = sync_playwright().start()
-    _browser = _playwright.chromium.launch(
+    _context = _playwright.chromium.launch_persistent_context(
+        user_data_dir=str(BROWSER_PROFILE_DIR),
         headless=False,
-        args=["--start-maximized", "--disable-blink-features=AutomationControlled"]
-    )
-    # Ephemeral context: no persistent profile, cookies or browser data are written to disk.
-    _context = _browser.new_context(
         no_viewport=True,
+        args=["--start-maximized", "--disable-blink-features=AutomationControlled"],
         user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
     )
-    _page = _context.new_page()
+    _page = _context.pages[0] if _context.pages else _context.new_page()
     return _page
-
-
 def close_browser() -> None:
-    """Closes the browser and cleans up Playwright resources."""
-    global _browser, _context, _page, _playwright
+    """Closes the browser context and cleans up Playwright resources."""
+    global _context, _page, _playwright
 
     try:
         if _page and not _page.is_closed():
@@ -238,9 +244,8 @@ def close_browser() -> None:
 
     _page = None
     _context = None
-    _browser = None
     _playwright = None
-    logger.info("Browser closed and Playwright resources cleaned up.")
+    logger.info("Browser closed and Playwright persistent context saved.")
 
 
 def is_browser_open() -> bool:

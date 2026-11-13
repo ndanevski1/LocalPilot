@@ -44,8 +44,8 @@ class TestSearchTemplates(unittest.TestCase):
         """Verify accurate natural language resolution on sample prompts."""
         test_cases = [
             (
-                "find the last paper of Ivana Pacar on google scholar and summarize it for me in one sentence",
-                "https://scholar.google.com/scholar?q=the+last+paper+of+Ivana+Pacar",
+                "find the last paper of Nikola Danevski on google scholar and summarize it for me in one sentence",
+                "https://scholar.google.com/scholar?q=the+last+paper+of+Nikola+Danevski",
                 "Google Scholar"
             ),
             (

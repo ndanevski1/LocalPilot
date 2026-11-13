@@ -294,7 +294,7 @@ When an instruction arrives, LocalPilot uses a multi-tiered resolution pipeline 
 
 1. **Curated Template Match (`search_templates.py`):**
    - The engine checks a registry of **100+ popular platforms** across Academic (Google Scholar, PubMed, arXiv, Semantic Scholar), Developer (GitHub, GitLab, Stack Overflow, PyPI, Hugging Face), E-Commerce (Amazon, eBay, Best Buy), Knowledge (Wikipedia, Britannica), Social, and News sites.
-   - If the prompt targets a known service (e.g., *"Find the latest paper of Ivana Pacar on google scholar"*), it immediately maps to the exact, authentic query template (`https://scholar.google.com/scholar?q={query}`), bypassing hallucinated endpoints like `/searchbyquery` and saving round-trip latency.
+   - If the prompt targets a known service (e.g., *"Find the latest paper of Nikola Danevski on google scholar"*), it immediately maps to the exact, authentic query template (`https://scholar.google.com/scholar?q={query}`), bypassing hallucinated endpoints like `/searchbyquery` and saving round-trip latency.
 2. **Explicit URL Detection:**
    - If the user provides a specific link or domain in their text (e.g., `https://...`, `example.com`, `sofia.edu`), the agent extracts it with regex and navigates directly there.
 3. **Dynamic Root Domain Inference & Sanitization:**

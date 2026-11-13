@@ -473,7 +473,7 @@ HTML_PAGE = """<!DOCTYPE html>
         </div>
         <div class="form-group">
           <label for="inputUsername">Username or Email</label>
-          <input type="text" id="inputUsername" placeholder="e.g. ivana@example.com" required>
+          <input type="text" id="inputUsername" placeholder="e.g. nikola@example.com" required>
         </div>
         <div class="form-group">
           <label for="inputPassword">Password</label>
