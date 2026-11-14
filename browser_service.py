@@ -106,9 +106,9 @@ def _chat(messages: List[Dict[str, str]], options: Optional[Dict[str, Any]] = No
 DECOMPOSE_INTENT_SYSTEM_PROMPT = (
     "You are an intent parser for an autonomous web browsing agent.\n"
     "Given a user's instruction, decompose it into three fields:\n"
-    "1. target_site: domain or name of the target website (e.g. 'wikipedia.org', 'github.com', 'amazon.com', 'reddit.com', 'google.com'). Default to 'google.com' if no specific platform is stated or implied.\n"
-    "2. search_keyword: the clean entity, subject, or proper noun to type into a search bar (e.g. 'Sofia University', 'LocalPilot', 'iPhone 16'). NEVER include roles, titles, or questions (e.g. use 'Sofia University', NOT 'president Sofia University'). Keep role or attribute questions strictly inside extraction_goal.\n"
-    "3. extraction_goal: the concise question, fact, or outcome the user wants answered or achieved (e.g. 'Identify who the president or rector is', 'Find who the repository owner is').\n\n"
+    "1. target_site: domain or name of the target website if specified or implied. If none is mentioned, use 'google.com'.\n"
+    "2. search_keyword: the core subject, entity, or search term to query. Strip action verbs, roles, attributes, and questions.\n"
+    "3. extraction_goal: the specific question, fact, attribute, or task the user wants answered or achieved.\n\n"
     "Output ONLY valid JSON with keys: \"target_site\", \"search_keyword\", \"extraction_goal\". No explanation or markdown."
 )
 
