@@ -105,6 +105,7 @@ class BrowserAgentTestCase(unittest.TestCase):
         patches = [
             patch.object(browser_service, "_ensure_browser", return_value=self.page),
             patch.object(browser_service, "_is_error_or_404_page", return_value=False),
+            patch.object(browser_service, "decompose_user_intent", return_value={"target_site": "shop.example", "search_keyword": "", "extraction_goal": "buy the cable"}),
             patch.object(browser_service, "infer_initial_url", return_value=SHOP),
             patch.object(browser_service, "_get_interactive_elements_and_snapshot", return_value=(ELEMENTS, PAGE_TEXT)),
             patch.object(browser_service, "_live_element_meta", side_effect=self.fake_live_meta),
@@ -368,5 +369,52 @@ class RealPlaywrightThreadTest(unittest.TestCase):
         asyncio.run(scenario())  # used to fail with "Playwright Sync API inside the asyncio loop"
 
 
-if __name__ == "__main__":
-    unittest.main()
+
+
+
+# --------------------------------------------------------------------------- #
+# Intent Decomposition Tests
+# --------------------------------------------------------------------------- #
+
+class DecomposeIntentTests(unittest.TestCase):
+    def test_decompose_wikipedia_intent(self):
+        fake_response = {
+            "message": {
+                "content": json.dumps({
+                    "target_site": "wikipedia.org",
+                    "search_keyword": "Sofia University",
+                    "extraction_goal": "Find who the president or rector of Sofia University is"
+                })
+            }
+        }
+        with patch.object(browser_service.ollama, "chat", return_value=fake_response):
+            intent = browser_service.decompose_user_intent("Find who the president of Sofia University is on Wikipedia")
+            self.assertEqual(intent["target_site"], "wikipedia.org")
+            self.assertEqual(intent["search_keyword"], "Sofia University")
+            self.assertIn("president", intent["extraction_goal"].lower())
+
+    def test_decompose_github_intent(self):
+        fake_response = {
+            "message": {
+                "content": json.dumps({
+                    "target_site": "github.com",
+                    "search_keyword": "LocalPilot",
+                    "extraction_goal": "Find the owner of the repository"
+                })
+            }
+        }
+        with patch.object(browser_service.ollama, "chat", return_value=fake_response):
+            intent = browser_service.decompose_user_intent('"Search GitHub for LocalPilot" and tell me who the owner of repository is')
+            self.assertEqual(intent["target_site"], "github.com")
+            self.assertEqual(intent["search_keyword"], "LocalPilot")
+
+    def test_decompose_fallback_on_invalid_json(self):
+        fake_response = {"message": {"content": "I am not sure what to do."}}
+        with patch.object(browser_service.ollama, "chat", return_value=fake_response):
+            intent = browser_service.decompose_user_intent("some unparseable prompt")
+            self.assertEqual(intent["target_site"], "google.com")
+            self.assertEqual(intent["extraction_goal"], "some unparseable prompt")
+
+
+if __name__ == "__main__":
+    unittest.main()

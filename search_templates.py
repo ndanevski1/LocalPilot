@@ -981,3 +981,43 @@ def resolve_search_template(prompt: str) -> Optional[Tuple[str, str, str]]:
         return formatted_url, entry["name"], query
 
     return None
+
+
+def resolve_template_by_site(site_or_domain: str, query: str = "") -> Optional[Tuple[str, str, str]]:
+    """
+    Direct lookup in the 100+ template registry by site name/domain and clean search query.
+    Returns: (formatted_url: str, site_name: str, clean_query: str) or None if not matched.
+    """
+    if not site_or_domain:
+        return None
+
+    site_clean = site_or_domain.lower().replace("https://", "").replace("http://", "").strip("/ ")
+    if site_clean.startswith("www."):
+        site_clean = site_clean[4:]
+    clean_q = (query or "").strip(" \"'.,!?")
+
+    def _format(entry):
+        if not clean_q:
+            return f"https://{entry['domain']}", entry["name"], ""
+        encoded_query = urllib.parse.quote_plus(clean_q)
+        formatted_url = entry["search_url"].replace("{query}", encoded_query)
+        return formatted_url, entry["name"], clean_q
+
+    # 1. Exact domain or alias match
+    for entry in SEARCH_TEMPLATES:
+        domain = entry["domain"].lower()
+        if domain.startswith("www."):
+            domain = domain[4:]
+        if domain == site_clean:
+            return _format(entry)
+        for alias in entry["aliases"]:
+            if alias.lower() == site_clean:
+                return _format(entry)
+
+    # 2. Substring domain or alias match
+    for entry in SEARCH_TEMPLATES:
+        domain = entry["domain"].lower()
+        if site_clean in domain or any(site_clean in a.lower() for a in entry["aliases"]):
+            return _format(entry)
+
+    return None
