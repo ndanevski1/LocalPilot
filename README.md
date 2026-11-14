@@ -384,6 +384,12 @@ To enable real-world tasks on authenticated services without requiring repeated 
   * **Reddit (`reddit.com`):** Single-step authentication with reCAPTCHA iframe detection and 2FA OTP prompt identification.
 * **404 Interception & Fallback:** If navigation lands on a broken page or returns a 404 status, LocalPilot detects the error in real time and automatically bridges to a Google Search query for the target task, allowing the agent to self-heal.
 
+### 7. Zero-Shot Intent Decomposition & Search Page Guardrails
+To prevent complex conversational phrasing from corrupting search queries or stalling navigation:
+* **Pre-Flight Intent Decomposition (`browser_service.py`):** Before launching Chromium, local Qwen separates user instructions into `target_site`, `search_keyword`, and `extraction_goal`. Search engines receive only the clean subject or entity (e.g. `"Sofia University"`), while Qwen focuses on answering the specific question (`"Find who the president or rector is"`).
+* **Direct Template Matching (`search_templates.py`):** Using `resolve_template_by_site()`, LocalPilot jumps directly to authentic search endpoints for over 100 popular services (Wikipedia, GitHub, Amazon, Google Scholar, Reddit).
+* **Search Results Page Guardrail:** On pages with `/search`, `?search=`, or `?q=`, Qwen is prohibited from calling `"finish"` on notice text (such as Wikipedia's *"The page does not exist"* notice) and must click the most relevant search result link.
+
 ---
 
 ## 🧪 Running the Tests
