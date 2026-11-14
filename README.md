@@ -22,6 +22,8 @@ What the code does today, what is only a demonstration, and what is still planne
 * **Autonomous browser agent** (`browser_service.py`): Playwright (visible Chromium) + local Ollama `qwen2.5:3b`, with live Pause / Go Back / Stop controls.
 * **Human-in-the-Loop approval gate for the browser agent** (`action_policy.py`, `approval_gate.py`): every action is classified as read-only or state-changing *in code*. State-changing actions (button clicks, form typing) must pass website, spending and completeness checks, then wait for your **Approve** in Telegram. Approvals are tied to your user ID, single-use, bound to the exact action, and expire after 30 minutes.
 * **Prompt-injection and secret safeguards:** webpage text is fenced as untrusted data; passwords, tokens and card numbers are redacted from every model prompt and from `localpilot.log`; form-field values are never read from pages; the agent never types into password fields.
+* **Persistent browser session caching & curated login recipes** (`browser_service.py`, `login_recipes.py`): Chromium cookies and session storage persist across runs in `vault/browser_profile/` (git-ignored, never committed). Includes curated deterministic selectors, 2FA, and CAPTCHA detection indicators for Amazon (two-step OpenID), GitHub, and Reddit.
+* **Automated 404 recovery bridge** (`browser_service.py`): broken URLs and HTTP 404 pages are intercepted automatically, falling back to a Google Search bridge to locate working target links without stalling the loop.
 * **Local credential vault dashboard** (`vault_app.py`, `vault_service.py`): `http://127.0.0.1:8080`, SQLite with Fernet-encrypted password field (see [Step 7](#step-7-optional-manage-stored-credentials-via-local-vault-dashboard) for its real limits).
 
 ### Demonstration only
@@ -361,6 +363,15 @@ Every action the model proposes is validated and classified by LocalPilot's code
 **Prompt-injection protection:** page text, element labels and URLs are passed to the model inside an `<<<UNTRUSTED_WEB_CONTENT>>>` fence, and the system prompt tells the model never to follow instructions found there. Even if a page convinces the model, the model has no way to approve or skip the gate, because classification and approval are enforced outside it.
 
 **Secrets:** every prompt goes through one function that redacts passwords, tokens, API keys and card numbers before Ollama sees them. Form-field values (which may hold autofilled passwords) are never read from the page, and typed text is not written to the log.
+
+### 6. Persistent Browser Context & Curated Login Recipes (Module 3)
+To enable real-world tasks on authenticated services without requiring repeated logins or re-triggering 2FA on every agent run, LocalPilot uses **persistent browser context caching**:
+* **On-Disk Profile Storage (`vault/browser_profile/`):** Launched via Playwright `launch_persistent_context`. Stored cookies, local storage, and session tokens remain on your local disk across runs and are strictly git-ignored to prevent credential leaks.
+* **Curated Login Recipes (`login_recipes.py`):** Deterministic selectors and flow descriptors for key target platforms:
+  * **Amazon (`amazon.com`):** Two-step login flow (`#ap_email` -> `#continue` -> `#ap_password` -> `#signInSubmit`) with OTP/MFA detection (`#auth-mfa-otpcode`) and CAPTCHA image recognition.
+  * **GitHub (`github.com`):** Single-step authentication with OctoCaptcha / ArkoseLabs detection and TOTP authenticator prompt detection.
+  * **Reddit (`reddit.com`):** Single-step authentication with reCAPTCHA iframe detection and 2FA OTP prompt identification.
+* **404 Interception & Fallback:** If navigation lands on a broken page or returns a 404 status, LocalPilot detects the error in real time and automatically bridges to a Google Search query for the target task, allowing the agent to self-heal.
 
 ---
 
