@@ -22,6 +22,9 @@ What the code does today, what is only a demonstration, and what is still planne
 * **Autonomous browser agent** (`browser_service.py`): Playwright (visible Chromium) + local Ollama `qwen2.5:3b`, with live Pause / Go Back / Stop controls.
 * **Human-in-the-Loop approval gate for the browser agent** (`action_policy.py`, `approval_gate.py`): every action is classified as read-only or state-changing *in code*. State-changing actions (button clicks, form typing) must pass website, spending and completeness checks, then wait for your **Approve** in Telegram. Approvals are tied to your user ID, single-use, bound to the exact action, and expire after 30 minutes.
 * **Prompt-injection and secret safeguards:** webpage text is fenced as untrusted data; passwords, tokens and card numbers are redacted from every model prompt and from `localpilot.log`; form-field values are never read from pages; the agent never types into password fields.
+* **Zero-shot pre-flight intent decomposition** (`browser_service.py`): Qwen parses compound instructions into `target_site`, clean `search_keyword` (proper nouns/entities), and `extraction_goal` before Chromium launches, preventing conversational phrasing from polluting search queries.
+* **Content-first DOM element prioritization & 4,500-char semantic window** (`browser_service.py`): interactive elements in core content (`<main>`, `<article>`, search cards) take precedence over navigation chrome (`<header>`, `<nav>`, sidebars), surfacing up to 45 actionable elements and a 4,500-character snapshot to Qwen.
+* **Search engine navigation guardrails** (`browser_service.py`): when the agent lands on search pages (e.g. `/search`, `?search=`, `?q=`), Qwen is constrained to click the most relevant article link rather than prematurely finishing on search notice boilerplate.
 * **Persistent browser session caching & curated login recipes** (`browser_service.py`, `login_recipes.py`): Chromium cookies and session storage persist across runs in `vault/browser_profile/` (git-ignored, never committed). Includes curated deterministic selectors, 2FA, and CAPTCHA detection indicators for Amazon (two-step OpenID), GitHub, and Reddit.
 * **Automated 404 recovery bridge** (`browser_service.py`): broken URLs and HTTP 404 pages are intercepted automatically, falling back to a Google Search bridge to locate working target links without stalling the loop.
 * **Local credential vault dashboard** (`vault_app.py`, `vault_service.py`): `http://127.0.0.1:8080`, SQLite with Fernet-encrypted password field (see [Step 7](#step-7-optional-manage-stored-credentials-via-local-vault-dashboard) for its real limits).
@@ -275,7 +278,7 @@ Telegram Instruction ──► URL Inference ──► Playwright Chromium (Visi
                                          ┌──────────┴──────────┐
                                          ▼                     ▼
                              DOM Elements Extractor     <main> Snapshot
-                             ([e0], [e1], [e2]...)     (1,200 chars clean text)
+                             (Content-first, top 45)   (4,500 chars clean text)
                                          └──────────┬──────────┘
                                                     ▼
                                           Qwen 2.5:3b (Ollama)
@@ -291,12 +294,17 @@ Telegram Instruction ──► URL Inference ──► Playwright Chromium (Visi
                              [⏸️ Pause] [⬅️ Go Back] [🛑 Stop]
 ```
 
-### 1. How Does the Agent Choose the Initial Website?
+### 1. How Does the Agent Choose the Initial Website & Query?
 When an instruction arrives, LocalPilot uses a multi-tiered resolution pipeline to ensure it lands on an authentic URL without hallucinating broken subpaths:
 
-1. **Curated Template Match (`search_templates.py`):**
+1. **Zero-Shot Pre-Flight Intent Decomposition (`browser_service.py`):**
+   - Before touching the browser, local Qwen decomposes compound user prompts into three normalized fields:
+     - `target_site`: domain or service name (e.g. `wikipedia.org`, `github.com`, `amazon.com`, `google.com`).
+     - `search_keyword`: the clean entity or proper noun (e.g. `Sofia University`, `LocalPilot`, `iPhone 16`), stripping questions and conversational filler.
+     - `extraction_goal`: the precise question, fact, or task to satisfy (e.g. *"Identify who the president or rector is"*).
+2. **Curated Template Match (`search_templates.py`):**
    - The engine checks a registry of **100+ popular platforms** across Academic (Google Scholar, PubMed, arXiv, Semantic Scholar), Developer (GitHub, GitLab, Stack Overflow, PyPI, Hugging Face), E-Commerce (Amazon, eBay, Best Buy), Knowledge (Wikipedia, Britannica), Social, and News sites.
-   - If the prompt targets a known service (e.g., *"Find the latest paper of Nikola Danevski on google scholar"*), it immediately maps to the exact, authentic query template (`https://scholar.google.com/scholar?q={query}`), bypassing hallucinated endpoints like `/searchbyquery` and saving round-trip latency.
+   - Using `resolve_template_by_site()`, it formats the authentic search URL with exact-match precedence (e.g., `https://en.wikipedia.org/w/index.php?search=Sofia+University` or `https://github.com/search?q=LocalPilot`), saving round-trip latency.
 2. **Explicit URL Detection:**
    - If the user provides a specific link or domain in their text (e.g., `https://...`, `example.com`, `sofia.edu`), the agent extracts it with regex and navigates directly there.
 3. **Dynamic Root Domain Inference & Sanitization:**
@@ -307,24 +315,23 @@ When an instruction arrives, LocalPilot uses a multi-tiered resolution pipeline 
 ### 2. How Do We Parse the Website Tree?
 A raw HTML DOM tree on modern websites can exceed 50,000 lines of code, which would instantly exhaust the token context of on-device LLMs and cause heavy CPU latency. LocalPilot employs a **two-track extraction strategy**:
 
-* **Track 1: Interactive Elements Tagging (`[data-localpilot-id]`):**
+* **Track 1: Content-First Interactive Elements Tagging (`[data-localpilot-id]`):**
   - A client-side JavaScript routine scans the DOM for interactive, visible selectors: `<input>`, `<button>`, `<a>`, `<textarea>`, `<select>`, and `[role="button"]`.
-  - Hidden or zero-dimension elements (`display: none`, `visibility: hidden`) are filtered out.
-  - Each valid element receives a temporary runtime attribute (e.g., `data-localpilot-id="e0"`, `data-localpilot-id="e1"`).
-  - The top 25 visible interactive elements are formatted into a compact list with their tag name, type, and text label (e.g., `[e14] <a> "Repositories 20"`).
+  - **Chrome Filtering:** Navigation chrome (`<nav>`, `<header>`, `<footer>`, `.sidebar`, `.mw-sidebar`, `.navbox`, `aside`) is separated from main body elements. Elements inside the primary content area (`<main>`, `<article>`, search results, `#content`) are tagged first (`e0`, `e1`, `e2`...).
+  - Up to **45 visible interactive elements** are formatted into a compact list with their tag name, type, and text label (e.g., `[e0] <a> "Sofia University (California)"`).
 
-* **Track 2: Semantic Content Snapshot (What the Character Snippet Is Used For):**
+* **Track 2: Semantic Content Snapshot (4,500-Character Clean Window):**
   - **Why not the whole page?** Reading the entire page causes CPU lag and pushes the 3B model into context degradation.
   - **Prioritizing `<main>` and `<article>`:** Rather than scanning `<body>` from index 0 (which is always congested with header boilerplate like *"Skip to content"*, navigation bars, and cookie notices), the extractor checks for standard semantic containers (`<main>` or `<article>`).
-  - **1,200-Character Clean Window:** The text is stripped of multiple whitespace/blank lines and truncated to a clean 1,200-character window (~250–300 tokens). This small footprint processes in **1–2 seconds on CPU** while placing the actual profile headers, repository counts, and text directly in front of the model.
+  - **4,500-Character Clean Window (~900–1,100 tokens):** The text is stripped of multiple whitespace/blank lines and truncated to 4,500 characters. This processes in **2–2.5 seconds on CPU** and provides complete visibility across article infoboxes, lead sections, and the first 3–4 paragraphs without getting truncated by notice banners.
   - **Purpose:** The snippet gives Qwen the **semantic context** to answer the question, while the element list provides the **action handles** to navigate.
 
 ### 3. How Does the Agent Move from One State to Another (The ReAct Loop)?
 At each step, Qwen receives:
 * The current page URL.
 * The previous 3 actions from execution history.
-* The list of tagged interactive elements.
-* The 1,200-character content snapshot.
+* The list of up to 45 tagged interactive elements (content-first).
+* The 4,500-character content snapshot.
 
 The model returns **exactly one JSON action**:
 1. `{"action": "navigate", "url": "https://..."}` — Jumps to a new URL.
@@ -336,6 +343,7 @@ The model returns **exactly one JSON action**:
 * **Editable Tag Guardrails:** Typing is only allowed into `<input>`, `<textarea>` or `contenteditable` elements, and never into password fields. A `"type"` action on a link or button is blocked; it is *not* converted into a click, because that would skip the approval gate.
 * **Per-Action Exception Shields:** Every individual action (`click`, `type`, `navigate`) is wrapped in isolated `try...except` error handlers. If an element detaches or a navigation times out, the failure is appended to `history` and the loop continues, allowing the model to recover on the next step.
 * **Early Finish Detection:** If the answer to the task is already visible in the snippet or element labels, Qwen is instructed to trigger `"finish"` immediately without unnecessary navigation.
+* **Search Results Page Guardrail:** On search engine or result index pages (URLs containing `/search`, `?search=`, `?q=`), Qwen is prohibited from finishing on boilerplate notices (such as Wikipedia's *"The page does not exist"* notice). Instead, it must click the most relevant search result link.
 
 ### 4. Human-in-the-Loop (HITL) Remote Guidance
 While the browser runs on your desktop, your Telegram card updates in real-time with step counters and Qwen's current action. You have direct control buttons under the card:
@@ -407,10 +415,10 @@ Yes. Because LocalPilot is a local-first agent that runs private tasks on your h
 **Yes.** The `credentials.json` file identifies the *application* (LocalPilot) to Google and is safe to share across your team via a private channel. Each team member goes through the OAuth flow independently using their own Google account, and each person's private session token (`token.json`) is stored only on their own local machine. No one can read another person's emails.
 
 #### 6. How does the agent handle large, heavy web pages without running out of CPU or memory?
-The agent never passes the raw HTML tree to Ollama. Instead, a lightweight JavaScript function strips out invisible nodes and extracts only the top 25 interactive elements (inputs, links, buttons) tagged with runtime IDs (`[e0]`, `[e1]`). In parallel, it queries `<main>` or `<article>` directly, filtering out cookie notices, sidebars, and navigation menus to keep prompt context concise (~250–300 tokens).
+The agent never passes the raw HTML tree to Ollama. Instead, a lightweight JavaScript function strips out invisible nodes and separates navigation chrome (headers, navbars, sidebars) from core content, tagging up to 45 primary interactive elements (search cards, article links, inputs, buttons) with runtime IDs (`[e0]`, `[e1]`). In parallel, it queries `<main>` or `<article>` directly, filtering out cookie notices and menus.
 
 #### 7. What is the character snippet used for? Is it 1,200 characters across the whole page or per tag?
-The snippet is a single 1,200-character plain text window extracted specifically from the core content container (`<main>` or `<article>`). It represents the primary information on the screen (e.g., repository counts, bio, body paragraphs). It gives the model semantic visibility so it can answer the prompt directly, while the element list provides the handles for clicking or typing.
+The snippet is a 4,500-character plain text window extracted specifically from the core content container (`<main>` or `<article>`). It represents the primary information on the screen (~900–1,100 tokens), covering infoboxes, lead sections, and the first 3–4 paragraphs. It gives the model semantic visibility to answer the prompt directly, while the element list provides the handles for clicking or typing.
 
 #### 8. Can the agent complete tasks in fewer steps if the answer is found early?
 **Yes.** On every iteration of the ReAct loop, Qwen evaluates whether the goal has already been satisfied. If the target answer is visible in the `<main>` snippet or in the element labels (e.g. `[e14] <a> "Repositories 20"`), Qwen returns `{"action": "finish", "answer": "..."}` immediately without navigating further. If max steps (10) are reached, a synthesis prompt extracts the best possible answer from the final page.

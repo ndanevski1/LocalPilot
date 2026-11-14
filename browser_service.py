@@ -107,7 +107,7 @@ DECOMPOSE_INTENT_SYSTEM_PROMPT = (
     "You are an intent parser for an autonomous web browsing agent.\n"
     "Given a user's instruction, decompose it into three fields:\n"
     "1. target_site: domain or name of the target website (e.g. 'wikipedia.org', 'github.com', 'amazon.com', 'reddit.com', 'google.com'). Default to 'google.com' if no specific platform is stated or implied.\n"
-    "2. search_keyword: the clean entity, subject, or search term to type into a search bar (e.g. 'Sofia University', 'LocalPilot', 'iPhone 16'). Strip command verbs, quotes, and conversational filler.\n"
+    "2. search_keyword: the clean entity, subject, or proper noun to type into a search bar (e.g. 'Sofia University', 'LocalPilot', 'iPhone 16'). NEVER include roles, titles, or questions (e.g. use 'Sofia University', NOT 'president Sofia University'). Keep role or attribute questions strictly inside extraction_goal.\n"
     "3. extraction_goal: the concise question, fact, or outcome the user wants answered or achieved (e.g. 'Identify who the president or rector is', 'Find who the repository owner is').\n\n"
     "Output ONLY valid JSON with keys: \"target_site\", \"search_keyword\", \"extraction_goal\". No explanation or markdown."
 )
@@ -345,18 +345,34 @@ def _get_interactive_elements_and_snapshot(page: Page) -> Tuple[List[Dict[str, A
         document.querySelectorAll('[data-localpilot-id]').forEach(el => el.removeAttribute('data-localpilot-id'));
 
         const interactiveSelectors = 'input, button, a, [role="button"], [role="searchbox"], textarea, select, [contenteditable="true"]';
-        const elements = Array.from(document.querySelectorAll(interactiveSelectors));
+        const allElements = Array.from(document.querySelectorAll(interactiveSelectors));
 
-        const visibleItems = [];
-        let index = 0;
+        // Separate main content elements from navigation chrome (headers, navbars, sidebars, footers)
+        const isChrome = el => !!el.closest('nav, header, footer, [role="navigation"], [role="banner"], [role="contentinfo"], .sidebar, .mw-sidebar, .navbox, aside');
 
-        for (const el of elements) {
+        const contentElements = [];
+        const chromeElements = [];
+
+        for (const el of allElements) {
             const rect = el.getBoundingClientRect();
             const style = window.getComputedStyle(el);
             const isVisible = rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none';
             if (!isVisible) continue;
             if ((el.getAttribute('type') || '').toLowerCase() === 'hidden') continue;
 
+            if (isChrome(el)) {
+                chromeElements.push(el);
+            } else {
+                contentElements.push(el);
+            }
+        }
+
+        // Prioritize content elements first, then append chrome elements if slots remain
+        const ordered = contentElements.concat(chromeElements);
+        const visibleItems = [];
+        let index = 0;
+
+        for (const el of ordered) {
             const id = 'e' + index;
             el.setAttribute('data-localpilot-id', id);
             const item = describe(el);
@@ -387,7 +403,7 @@ def _get_interactive_elements_and_snapshot(page: Page) -> Tuple[List[Dict[str, A
 
         raw_text = re.sub(r"\n{3,}", "\n\n", raw_text)
         raw_text = re.sub(r"[ \t]{2,}", " ", raw_text).strip()
-        body_snippet = raw_text[:3000]
+        body_snippet = raw_text[:5000]
     except Exception:
         body_snippet = ""
 
@@ -426,6 +442,7 @@ SYSTEM_PROMPT = (
     '- For a purchase click, add "amount" and "currency" fields with the exact price shown on the page.\n\n'
     "RULES:\n"
     "- If the answer to the TASK is visible in the page content or element labels, immediately return action 'finish' with the answer.\n"
+    "- SEARCH RESULTS PAGES: When on a search engine or search results page (URLs containing '/search', '?search=', '?q=', or search engines), NEVER finish on notice text. Instead, inspect the search results in ELEMENTS and return 'click' on the most relevant link for the subject.\n"
     "- NEVER finish if the page says '404', 'Not Found', or an error. If a page is broken, use 'navigate' to go to https://www.google.com.\n"
     "- NEVER use 'type' on links <a> or buttons <button>; use 'click' instead.\n"
     "- Output ONLY raw JSON. No markdown fences."
@@ -445,14 +462,14 @@ def _build_user_prompt(
         type_part = f'[{item["type"]}]' if item.get("type") else ""
         elem_lines.append(f'[{item["id"]}] <{item["tag"]}{type_part}> {label_part}')
 
-    elements_text = "\n".join(elem_lines[:25])
+    elements_text = "\n".join(elem_lines[:45])
     history_text = "\n".join(history[-3:]) if history else "(None)"
 
     page_block = (
         f"URL: {current_url}\n"
         f"PREVIOUS STEPS: {history_text}\n"
         f"ELEMENTS:\n{elements_text}\n"
-        f"PAGE CONTENT: {page_snippet[:1200]}"
+        f"PAGE CONTENT: {page_snippet[:4500]}"
     )
     return (
         f"TASK: {task}\n"
