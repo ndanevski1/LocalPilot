@@ -8,6 +8,9 @@ LocalPilot is an open-source, local-first AI action agent that runs directly on 
 
 > 📖 **Looking for full system specifications and architecture?**  
 > See [PROJECT_DETAILS.md](PROJECT_DETAILS.md) for the complete Software Requirements Specification (SRS), team roles, and module roadmap.
+> 
+> 💡 **Looking for ready-to-use sample queries?**  
+> See [example_user_prompts.md](example_user_prompts.md) for 10 verified instructions covering email digests, knowledge extraction, GitHub searches, and approval workflows.
 
 ---
 
